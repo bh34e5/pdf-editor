@@ -1,0 +1,158 @@
+datatypes (remember case sensitivity)
+  booleans
+    true, false
+
+  numbers
+    integers, reals
+
+  strings
+    surrounded by parentheses, can be split with a backslash
+    escape sequences
+      \n   - linefeed
+      \r   - carriage return
+      \t   - horizontal tab
+      \b   - backspace
+      \f   - formfeed
+      \\   - backslash
+      \(   - left paren
+      \)   - right paren
+      \ddd - character code specified in octal
+             - may contain 1, 2, 3 octal digits
+
+    can also be specified in hexadecimal when surrounded with angle brackets
+    (<>). if the final digit is excluded, it's assumed to be a 0
+
+  names
+    specified by a forward slash, a letter, and then a sequence of characters
+    that are not linefeed, carriage return, %, (, ), <, >, [, ], {, and }
+
+  arrays
+    open bracket, sequence of objects, close bracket, e.g., [0 (Higgs) false]
+
+  dictionaries
+    open two double angle brackets, sequence of key-value pairs, where the key
+    must be a name and the value is any object, and then close two angle
+    brackets, e.g., << /Type /Example /Key2 12 /Key3 (a string)>>
+    Convention: Type key specifies type of the object being described, value is
+    always a name
+
+  stream
+    a sequence of characters that does not need to be read all at once. consists
+    of a dictionary describing the sequence of chars, the keyword `stream`, the
+    chars, and then the keyword `endstream`
+    The dictionary describes
+      Length - int - required
+        number of characters from first line after the one containing stream to
+        the one containing endstream
+      Filter - name or array of names - optional
+        filters to be applied while processing stream -- ordered (first item,
+        last filter applied)
+      DecodeParms - variable type - optional
+        if no filters require parameters, exclude this, otherwise, the number
+        and types must match those needed by the filters. if a filter doesn't
+        need any, specify the null object for that entry in the array
+    I feel like it's a bit unclear, but I think stream needs to be the last
+    keyword on its line, and endstream should start a new line?
+
+  null object
+    the keyword `null`
+
+  indirect object
+    direct objects are bools, nums, strings, names, arrays, dicts, streams, or
+    null. indirect objects are ones that have been labeled so they can be
+    referenced by other objects. consists of object identifier, direct object,
+    and the `endobj` keyword, where the object identifier is an object number,
+    generation number, and the `obj` keyword.
+
+  object references
+    objects used as an element in array or value in dict may be specified by
+    direct object or indirect reference. indirect reference consists of indirect
+    object's object number, generation number, and `R` keyword.
+
+    example
+    ```
+    7 0 obj
+    <<
+    /Length 8 0 R
+    >>
+    stream
+    BT
+    /F1 12 Tf
+    72 712 Td (A stream with an indirect Length) Tj
+    ET
+    endstream
+    endobj
+    8 0 obj
+    64
+    endobj
+    ```
+
+file structure
+  one line header, body, cross-reference table, and a trailer
+  all information in a pdf file is ASCII
+  no line in a pdf may be longer than 255 characters
+
+  header - specifies the version number
+    percent charater, the string PDF-, and then the version number, e.g.,
+    %PDF-1.0
+
+  body - a sequence of indirect objects specifying the document
+    comments are started with a percent sign and continue to the end of the
+    line, unless the character is a part of a string
+
+  cross-reference table - used to be able to locate any indirect object at any
+      time, without reading the whole file
+    each indirect object has an entry in the cross-reference table
+    the cross-reference table contains one or more sections, which begin with a
+    line containing the keyword `xref` followed by 1 or more cross-reference
+    subsections
+    subsections consist of the object number of the first entry, then the number
+    of entries in the subsection, followed by the entries
+    each entry is exactly 20 characters, including end-of-line, and there are
+    two formats:
+      for objects in use
+        byte offset from the beginning of the file to the beginning of the
+        object, generation number, and then the `n` keyword. byte offset is a 10
+        digit number, with leading zeros if necessary. then a single space
+        followed by a five digit generation number. then a space, and then the
+        `n` keyword. depending on end-of-line, it's preceded by a space to add
+        to two characters.
+      for deleted objects that are "free"
+        the object number of the next free number, then a generation number, and
+        then the `f` keyword. same character constraints as above. the free
+        objects form a linked list. the first item is always object 0 and
+        generation index 65535. the last entry uses 0 as the object number of
+        the next free object. when an object is deleted, its entry is marked as
+        free, and the generation index incremented. once it hits 65535, the
+        entry won't be reused.
+
+  trailer - enables reader to quickly find xref section & other special objects
+    last line of the file contains the eof marker `%%EOF`
+    third- and second-to-last lines are `startxref` and then the byte offset of
+    the start of the xref keyword of the last cross-reference section
+
+    preceding that is the trailer table which consists of the keyword `trailer`
+    then a dictionary
+      Size -(required)- total entries in cross-reference table, including
+        original table and all updates
+      Prev -(required if multipled xref sections)- byte offset from the
+        beginning of the file to the location of the previous xref section
+      Root -(required; must be indirect reference)- catalog object for the
+        document
+      Info -(optional; must be indirect reference)- info dictionary for the
+        document
+
+document structure
+  hierarchical set of objects. the root is the Catalog dictionary (specified by
+  root in the trailer dictionary)
+
+  Catalog
+  - Pages
+    - Page
+      - Imageable content
+      - Thumbnail
+      - Annotations
+    - ...
+  - Outline
+    - Outline entry
+    - ...
