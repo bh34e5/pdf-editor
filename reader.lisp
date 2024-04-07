@@ -9,47 +9,79 @@
     :reader pdf-line-ending
     :initarg :line-ending
     :type (member :lf :cr :crlf)
-    :initform (error "Line Endings Type Required"))
+    :initform (error "Line Ending Required"))
    (%header-version
     :reader pdf-header-version
-    :initarg :header-version
-    :initform (error "Header Version Required"))
+    :initarg :header-version)
    (%cross-ref-start
     :reader pdf-cross-ref-start)
    (%trailer-start
     :reader pdf-trailer-start)))
 
+(defun load-pdf (filename)
+  (let* ((file-handle (open filename
+                            :direction :input
+                            :element-type '(unsigned-byte 8))))
+    (make-instance 'pdf-wrapper
+                   :handle file-handle
+                   :line-ending (get-file-line-ending file-handle))))
+
 (defmethod initialize-instance :after ((pdf-wrapper pdf-wrapper) &key)
-  (let ((handle (pdf-handle pdf-wrapper)))
-    (setf (slot-value pdf-wrapper '%cross-ref-start)
-          (find-cross-ref-start pdf-wrapper))
-    (setf (slot-value pdf-wrapper '%trailer-start)
-          (find-trailer-start pdf-wrapper))))
+  ;; TODO: decide whether these should be calculated before creating the object
+  ;; or here in the after initialize-instance...
+  (setf (slot-value pdf-wrapper '%header-version)
+        (read-version-specifier pdf-wrapper line-ending))
+  (setf (slot-value pdf-wrapper '%cross-ref-start)
+        (find-cross-ref-start pdf-wrapper))
+  (setf (slot-value pdf-wrapper '%trailer-start)
+        (find-trailer-start pdf-wrapper)))
 
-(defmethod find-cross-ref-start ((pdf-wrapper pdf-wrapper))
+(defmethod read-bytes ((pdf-wrapper pdf-wrapper)
+                       &key
+                       (num 1)
+                       (direction :forward)
+                       (to-line-end-p nil))
+  (if (to-line-end-p)
+    (if (not (eq direction :forward))
+      ;; TODO: better handling :D
+      (error "Invalid argument combination")
+      (let ((container (make-array num
+                                   :fill-pointer 0
+                                   :element-type '(unsigned-byte 8)
+                                   :adjustable t)))
+        (read-to-line-ending (pdf-handle pdf-wrapper)
+                             (pdf-line-ending pdf-wrapper)
+                             :action (lambda (cur-char)
+                                       (vector-push-extend cur-char
+                                                           container)))
+        container))
+    (let ((file-handle (pdf-handle pdf-wrapper)))
+      (if (= num 1)
+        (read-single-byte file-handle direction)
+        (let ((container (make-array num :element-type '(unsigned-byte 8))))
+          (if (eq direction :backward)
+            (file-position file-handle (- (file-position file-handle) num)))
+          (read-sequence container file-handle)
+          (if (eq direction :backward)
+            (file-position file-handle (- (file-position file-handle) num)))
+          container)))))
+
+(defun read-single-byte (file-handle direction)
+  (let ((res))
+    (if (eq direction :backward)
+      (file-position file-handle (- (file-position file-handle) 1)))
+    (setf res (read-byte file-handle))
+    (if (eq direction :backward)
+      (file-position file-handle (- (file-position file-handle) 1)))
+    res))
+
+(defmethod scan-forward-line ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
-        (eof-sym-start (find-eof-sym-start file-handle)))
-    (file-position file-handle eof-sym-start)
-    (scan-back-line pdf-wrapper) ; move to start of line with offset
-    (scan-back-line pdf-wrapper) ; move to start of line with startxref keyword
-    (format t "~A~%" (file-position file-handle))
-    (let ((arr
-           (make-array (length +startxref+) :element-type '(unsigned-byte 8))))
-      (read-sequence arr file-handle)
-      (if (not (equalp arr +startxref+))
-        (error "Error Reading PDF. Could not find `startxref` keyword")
-        (progn
-          (scan-forward-line)))
-    ;; TODO: assert I've got the startxref keyword, then read the byte offset
-    ;; and return it
-    ))
-
-(defmethod find-trailer-start ((pdf-wrapper pdf-wrapper))
-  (let ((cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
-    ;; TODO: read the xref keyword, and then skip the appropriate number of
-    ;; lines to get past all the cross reference subsections, until hitting the
-    ;; trailer and then return the byte offset
-    ))
+        (line-ending (pdf-line-ending pdf-wrapper)))
+    (read-to-line-ending file-handle line-ending)
+    (file-position file-handle
+                   (+ (file-position file-handle)
+                      (if (eq line-ending :crlf) 2 1)))))
 
 (defmethod scan-back-line ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
@@ -72,8 +104,20 @@
     (if (eq line-ending :crlf)
       (file-position file-handle (1+ (file-position file-handle))))))
 
-(defun find-eof-sym-start (file-handle)
-  (let ((f-len (file-length file-handle))
+(defmethod read-version-specifier ((pdf-wrapper pdf-wrapper) line-ending)
+  (let ((file-handle (pdf-handle pdf-wrapper)))
+    (file-position file-handle 0)
+    (if (< (file-length file-handle) 5)
+      (error "Invalid PDF"))
+    (let ((arr (read-bytes pdf-wrapper :num 5))
+      (if (not (equalp arr +header-beginning+))
+        (error "Invalid PDF")
+        (let ((version-spec (read-bytes pdf-wrapper :num 3 :to-line-end-p t)))
+          (map 'string #'code-char version-spec)))))))
+
+(defmethod find-eof-sym-start ((pdf-wrapper pdf-wrapper))
+  (let ((file-handle (pdf-handle pdf-wrapper))
+        (f-len (file-length file-handle))
         (test-arr (make-array 5 :element-type '(unsigned-byte 8))))
     (do ((start (- f-len 4) (1- start)))
         ((< start 0) (error "EOF keyword could not be found"))
@@ -82,16 +126,28 @@
       (if (equalp test-arr +eof-sym+)
         (return start)))))
 
-(defun load-pdf (filename)
-  (let* ((file-handle (open filename
-                            :direction :input
-                            :element-type '(unsigned-byte 8)))
-         (line-ending (get-file-line-ending file-handle))
-         (version (read-version-specifier file-handle line-ending)))
-    (make-instance 'pdf-wrapper
-                   :handle file-handle
-                   :line-ending line-ending
-                   :header-version version)))
+(defmethod find-cross-ref-start ((pdf-wrapper pdf-wrapper))
+  (let ((file-handle (pdf-handle pdf-wrapper))
+        (eof-sym-start (find-eof-sym-start file-handle)))
+    (file-position file-handle eof-sym-start)
+    (scan-back-line pdf-wrapper) ; move to start of line with offset
+    (scan-back-line pdf-wrapper) ; move to start of line with startxref keyword
+    (format t "~A~%" (file-position file-handle))
+    (let ((arr (read-bytes pdf-wrapper :num (length +startxref+))))
+      (if (not (equalp arr +startxref+))
+        (error "Error Reading PDF. Could not find `startxref` keyword")
+        (progn
+          (scan-forward-line pdf-wrapper)))
+    ;; TODO: assert I've got the startxref keyword, then read the byte offset
+    ;; and return it
+    ))
+
+(defmethod find-trailer-start ((pdf-wrapper pdf-wrapper))
+  (let ((cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
+    ;; TODO: read the xref keyword, and then skip the appropriate number of
+    ;; lines to get past all the cross reference subsections, until hitting the
+    ;; trailer and then return the byte offset
+    ))
 
 (defun get-file-line-ending (file-handle)
   (file-position file-handle 0)
@@ -103,23 +159,6 @@
              ((eq cur-char +return-char+) :cr)
              ((eq cur-char +feed-char+) :lf)))
     nil))
-
-(defun read-version-specifier (file-handle line-ending)
-  (file-position file-handle 0)
-  (let ((arr (make-array 5 :element-type '(unsigned-byte 8))))
-    (read-sequence arr file-handle)
-    (if (not (equalp arr +header-beginning+))
-      (error "Invalid PDF")
-      (let ((version-spec (make-array 3
-                                      :fill-pointer 0
-                                      :element-type '(unsigned-byte 8)
-                                      :adjustable t)))
-        (read-to-line-ending file-handle
-                             line-ending
-                             :action (lambda (cur-char)
-                                       (vector-push-extend cur-char
-                                                           version-spec)))
-        (map 'string #'code-char version-spec)))))
 
 (defun read-to-line-ending (file-handle line-ending &key (action nil))
   (do ((cur-char (read-byte file-handle)
@@ -136,12 +175,6 @@
       (funcall action cur-char)))
   (file-position file-handle
                  (- (file-position file-handle)
-                    (if (eq line-ending :crlf) 2 1))))
-
-(defun scan-forward-line (file-handle line-ending)
-  (read-to-line-ending file-handle line-ending)
-  (file-position file-handle
-                 (+ (file-position file-handle)
                     (if (eq line-ending :crlf) 2 1))))
 
 (defun read-object (file-handle)
