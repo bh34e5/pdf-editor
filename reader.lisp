@@ -137,17 +137,31 @@
       (if (not (equalp arr +startxref+))
         (error "Error Reading PDF. Could not find `startxref` keyword")
         (progn
-          (scan-forward-line pdf-wrapper)))
-    ;; TODO: assert I've got the startxref keyword, then read the byte offset
-    ;; and return it
-    ))
+          (scan-forward-line pdf-wrapper)
+          (let ((offset (read-number file-handle)))
+            (if (<= (file-length file-handle) offset)
+              (error "Invalid offset for cross-reference"))
+            offset))))))
 
 (defmethod find-trailer-start ((pdf-wrapper pdf-wrapper))
-  (let ((cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
+  (let ((file-handle (pdf-handle pdf-wrapper))
+        (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
+    (let ((kwd (read-keyword file-handle)))
+      (if (not (eq kwd +xref+))
+        (error "Invalid cross-reference section"))
+      (do ((section (read-cross-reference-subsection file-handle)
+                    (read-cross-reference-subsection file-handle)))
+          ((eq (section +trailer+)))
+        nil))
     ;; TODO: read the xref keyword, and then skip the appropriate number of
     ;; lines to get past all the cross reference subsections, until hitting the
     ;; trailer and then return the byte offset
     ))
+
+(defun read-cross-reference-subsection (file-handle)
+  ;; read and object. if it's an integer, it's a subsection
+  ;; otherwise it should be the keyword `trailer`
+  )
 
 (defun get-file-line-ending (file-handle)
   (file-position file-handle 0)

@@ -14,6 +14,8 @@
 (define-keyword-constant +eof-sym+ "%%EOF")
 
 (define-keyword-constant +startxref+ "startxref")
+(define-keyword-constant +trailer+ "trailer")
+(define-keyword-constant +xref+ "xref")
 
 (alexandria:define-constant +line-endings+ `(,+return-char+ ,+feed-char+)
                             :test #'equalp)
