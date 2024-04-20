@@ -1,47 +1,30 @@
 (in-package #:com.bhester.reader)
 
-(defclass pdf-wrapper ()
-  ((%handle
-    :reader pdf-handle
-    :initarg :handle
-    :initform (error "PDF Handle Required"))
-   (%line-ending
-    :reader pdf-line-ending
-    :initarg :line-ending
-    :type (member :lf :cr :crlf)
-    :initform (error "Line Ending Required"))
-   (%header-version
-    :reader pdf-header-version
-    :initarg :header-version)
-   (%cross-ref-start
-    :reader pdf-cross-ref-start)
-   (%trailer-start
-    :reader pdf-trailer-start)))
-
 (defun load-pdf (filename)
   (let* ((file-handle (open filename
                             :direction :input
                             :element-type '(unsigned-byte 8))))
     (make-instance 'pdf-wrapper
                    :handle file-handle
-                   :line-ending (get-file-line-ending file-handle))))
+                   :line-ending (futils:get-file-line-ending file-handle))))
 
 (defmethod initialize-instance :after ((pdf-wrapper pdf-wrapper) &key)
   ;; TODO: decide whether these should be calculated before creating the object
   ;; or here in the after initialize-instance...
-  (setf (slot-value pdf-wrapper '%header-version)
-        (read-version-specifier pdf-wrapper line-ending))
-  (setf (slot-value pdf-wrapper '%cross-ref-start)
-        (find-cross-ref-start pdf-wrapper))
-  (setf (slot-value pdf-wrapper '%trailer-start)
-        (find-trailer-start pdf-wrapper)))
+  (let ((line-ending (pdf-line-ending pdf-wrapper)))
+    (setf (slot-value pdf-wrapper '%header-version)
+          (read-version-specifier pdf-wrapper line-ending))
+    (setf (slot-value pdf-wrapper '%cross-ref-start)
+          (find-cross-ref-start pdf-wrapper))
+    (setf (slot-value pdf-wrapper '%trailer-start)
+          (find-trailer-start pdf-wrapper))))
 
 (defmethod read-bytes ((pdf-wrapper pdf-wrapper)
                        &key
                        (num 1)
                        (direction :forward)
                        (to-line-end-p nil))
-  (if (to-line-end-p)
+  (if to-line-end-p
     (if (not (eq direction :forward))
       ;; TODO: better handling :D
       (error "Invalid argument combination")
@@ -49,7 +32,7 @@
                                    :fill-pointer 0
                                    :element-type '(unsigned-byte 8)
                                    :adjustable t)))
-        (read-to-line-ending (pdf-handle pdf-wrapper)
+        (futils:read-to-line-ending (pdf-handle pdf-wrapper)
                              (pdf-line-ending pdf-wrapper)
                              :action (lambda (cur-char)
                                        (vector-push-extend cur-char
@@ -69,16 +52,16 @@
 (defun read-single-byte (file-handle direction)
   (let ((res))
     (if (eq direction :backward)
-      (file-position file-handle (- (file-position file-handle) 1)))
+      (file-position file-handle (1- (file-position file-handle))))
     (setf res (read-byte file-handle))
     (if (eq direction :backward)
-      (file-position file-handle (- (file-position file-handle) 1)))
+      (file-position file-handle (1- (file-position file-handle))))
     res))
 
 (defmethod scan-forward-line ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
         (line-ending (pdf-line-ending pdf-wrapper)))
-    (read-to-line-ending file-handle line-ending)
+    (futils:read-to-line-ending file-handle line-ending)
     (file-position file-handle
                    (+ (file-position file-handle)
                       (if (eq line-ending :crlf) 2 1)))))
@@ -94,12 +77,12 @@
     (do ((cur-char (read-byte file-handle) (read-byte file-handle))
          (prev-char nil cur-char))
         ((or (and (eq line-ending :crlf)
-                  (eq cur-char +return-char+)
-                  (eq prev-char +feed-char+))
+                  (eq cur-char futils:+return-char+)
+                  (eq prev-char futils:+feed-char+))
              (and (eq line-ending :cr)
-                  (eq cur-char +return-char+))
+                  (eq cur-char futils:+return-char+))
              (and (eq line-ending :lf)
-                  (eq cur-char +feed-char+))))
+                  (eq cur-char futils:+feed-char+))))
       (file-position file-handle (- (file-position file-handle) 2)))
     (if (eq line-ending :crlf)
       (file-position file-handle (1+ (file-position file-handle))))))
@@ -109,16 +92,18 @@
     (file-position file-handle 0)
     (if (< (file-length file-handle) 5)
       (error "Invalid PDF"))
-    (let ((arr (read-bytes pdf-wrapper :num 5))
+    (let ((arr (read-bytes pdf-wrapper :num 5)))
       (if (not (equalp arr +header-beginning+))
         (error "Invalid PDF")
-        (let ((version-spec (read-bytes pdf-wrapper :num 3 :to-line-end-p t)))
-          (map 'string #'code-char version-spec)))))))
+        (let ((version-spec (read-bytes pdf-wrapper
+                                        :num 3
+                                        :to-line-end-p t)))
+          (map 'string #'code-char version-spec))))))
 
 (defmethod find-eof-sym-start ((pdf-wrapper pdf-wrapper))
-  (let ((file-handle (pdf-handle pdf-wrapper))
-        (f-len (file-length file-handle))
-        (test-arr (make-array 5 :element-type '(unsigned-byte 8))))
+  (let* ((file-handle (pdf-handle pdf-wrapper))
+         (f-len (file-length file-handle))
+         (test-arr (make-array 5 :element-type '(unsigned-byte 8))))
     (do ((start (- f-len 4) (1- start)))
         ((< start 0) (error "EOF keyword could not be found"))
       (file-position file-handle start)
@@ -128,30 +113,34 @@
 
 (defmethod find-cross-ref-start ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
-        (eof-sym-start (find-eof-sym-start file-handle)))
+        (line-ending (pdf-line-ending pdf-wrapper))
+        (eof-sym-start (find-eof-sym-start pdf-wrapper)))
     (file-position file-handle eof-sym-start)
     (scan-back-line pdf-wrapper) ; move to start of line with offset
     (scan-back-line pdf-wrapper) ; move to start of line with startxref keyword
-    (format t "~A~%" (file-position file-handle))
     (let ((arr (read-bytes pdf-wrapper :num (length +startxref+))))
       (if (not (equalp arr +startxref+))
         (error "Error Reading PDF. Could not find `startxref` keyword")
         (progn
           (scan-forward-line pdf-wrapper)
-          (let ((offset (read-number file-handle)))
-            (if (<= (file-length file-handle) offset)
+          (let ((offset (read-object file-handle line-ending)))
+            (assert (eq (type-of offset) 'pdf-number))
+            (if (<= (file-length file-handle) (numeric-value offset))
               (error "Invalid offset for cross-reference"))
-            offset))))))
+            (numeric-value offset)))))))
 
 (defmethod find-trailer-start ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
+        (line-ending (pdf-line-ending pdf-wrapper))
         (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
-    (let ((kwd (read-keyword file-handle)))
-      (if (not (eq kwd +xref+))
+    (file-position file-handle cross-ref-start)
+    (let ((kwd (read-object file-handle line-ending)))
+      (if (not (eq kwd +kwd-xref+))
         (error "Invalid cross-reference section"))
       (do ((section (read-cross-reference-subsection file-handle)
                     (read-cross-reference-subsection file-handle)))
-          ((eq (section +trailer+)))
+          ((eq section +trailer+))
+        ;; TODO: resolve this infinite loop by implementing read subsection
         nil))
     ;; TODO: read the xref keyword, and then skip the appropriate number of
     ;; lines to get past all the cross reference subsections, until hitting the
@@ -159,52 +148,152 @@
     ))
 
 (defun read-cross-reference-subsection (file-handle)
-  ;; read and object. if it's an integer, it's a subsection
+  ;; read an object. if it's an integer, it's a subsection
   ;; otherwise it should be the keyword `trailer`
+  (declare (ignore file-handle))
   )
 
-(defun get-file-line-ending (file-handle)
-  (file-position file-handle 0)
-  (do ((cur-char (read-byte file-handle) (read-byte file-handle)))
-      ((member cur-char +line-endings+)
-       (cond ((and (eq cur-char +return-char+)
-                   (eq (read-byte file-handle) +feed-char+))
-              :crlf)
-             ((eq cur-char +return-char+) :cr)
-             ((eq cur-char +feed-char+) :lf)))
-    nil))
+(defun alpha-p (ch)
+  (or (<= (char-code #\a) ch (char-code #\z))
+      (<= (char-code #\A) ch (char-code #\Z))))
 
-(defun read-to-line-ending (file-handle line-ending &key (action nil))
-  (do ((cur-char (read-byte file-handle)
-                 (or test-char (read-byte file-handle)))
-       (test-char nil nil))
-      ((or (and (eq line-ending :lf)
-                (eq cur-char +feed-char+))
-           (and (eq line-ending :crlf)
-                (eq cur-char +return-char+)
-                (eq (setf test-char (read-byte file-handle)) +feed-char+))
-           (and (eq line-ending :cr)
-                (eq cur-char +return-char+))))
-    (when action
-      (funcall action cur-char)))
-  (file-position file-handle
-                 (- (file-position file-handle)
-                    (if (eq line-ending :crlf) 2 1))))
+(defun digit-p (ch)
+  (<= (char-code #\0) ch (char-code #\9)))
 
-(defun read-object (file-handle)
+(defun whitespace-p (ch)
+  (member ch '(#x00  ;; NULL
+               #x09  ;; Tab
+               #x0A  ;; Line Feed
+               #x0C  ;; Form Feed
+               #x0D  ;; Carriage Return
+               #x20  ;; Space
+               )))
+
+(defun read-object (file-handle line-ending)
   (let ((c (read-byte file-handle)))
-    ;; FIXME: can this be a `.` to start off a real number?
-    (cond ((<= (char-code #\0) c (char-code #\9))
+    (cond ((eq (char-code #\%) c)
+           (futils:read-to-line-ending file-handle line-ending)
+           (read-object file-handle line-ending))
+          ((whitespace-p c)
+           ;; already incremented with the read, so just try again
+           (read-object file-handle line-ending))
+          ((digit-p c)
+           (read-possible-object file-handle c line-ending))
+          ((or (eq c (char-code #\.))
+               (eq c (char-code #\+))
+               (eq c (char-code #\-)))
            (read-number file-handle c))
+          ((alpha-p c) (read-keyword file-handle c))
           (t (error "Unimplemented object")))))
 
-(defun read-number (file-handle first-char)
-  (do ((n (- first-char (char-code #\0)))
-       (decimal-places 0 ))
-      (())
-    ))
+(defun read-possible-object (file-handle first-char line-ending)
+  (let* ((num (read-number file-handle first-char))
+         (reset-position (file-position file-handle)))
+    (if (or (eq :real (num-type num))
+            (< (numeric-value num) 0))
+      ;; number with a decimal point or a negative number, must be a number
+      num
+      ;; integer result, could still be an object or reference
+      (labels ((try-second-and-third ()
+                 (let ((next-obj (read-object file-handle line-ending)))
+                   (if (and (typep next-obj 'pdf-number)
+                            (eq :integer (num-type next-obj))
+                            (>= (numeric-value next-obj) 0))
+                     (let ((third-obj (read-object file-handle line-ending)))
+                       (if (and (typep third-obj 'pdf-keyword)
+                                (or (eq third-obj +kwd-obj+)
+                                    (eq third-obj +kwd-r+)))
+                         (if (eq third-obj +kwd-r+)
+                           ;; TODO: return indirect object reference
+                           nil
+                           ;; TODO: continue reading the object
+                           nil)
+                         ;; this wasn't an object / reference after all.
+                         ;; return the number
+                         (progn
+                           (file-position file-handle reset-position)
+                           num)))
+                     ;; next-obj was not a positive integer, so this can't be a
+                     ;; reference. return the original number
+                     (progn
+                       (file-position file-handle reset-position)
+                       num)))))
+        (handler-case
+            (try-second-and-third)
+          (end-of-file ()
+            (file-position file-handle reset-position)
+            num))))))
 
-(mutil:comment
+(defun code->int (ch)
+  (assert (digit-p ch))
+  (- ch (char-code #\0)))
+
+(defun read-number (file-handle first-char)
+  ;;; FIXME: this doesn't handle plus/minus sign
+  (labels ((read-next ()
+             (read-byte file-handle))
+           (read-num-rec (ch &optional (n 0) (real-p nil) (decimal-places 0))
+             (if (not (or (digit-p ch) (eq (char-code #\.) ch)))
+               (progn
+                 ;; move the handle back a byte, then return the number
+                 (file-position file-handle
+                                (1- (file-position file-handle)))
+                 (values
+                  (if real-p
+                    (/ n (expt 10 decimal-places))
+                    n)
+                  real-p))
+               (if (eq (char-code #\.) ch)
+                 (if real-p
+                   (error "Invalid number, two decimal places...")
+                   (read-num-rec (read-next) n t decimal-places))
+                 (progn
+                   (read-num-rec
+                    (read-next)
+                    (+ (* 10 n)
+                       (code->int ch))
+                    real-p
+                    (if real-p (1+ decimal-places) decimal-places)))))))
+    (multiple-value-bind (num real-p)
+        (read-num-rec first-char)
+      (make-instance 'pdf-number
+                     :num-type (if real-p :real :integer)
+                     :numeric-value num))))
+
+(defun read-keyword (file-handle first-char)
+  (labels ((read-next ()
+             (read-byte file-handle))
+           (kwd-from (bytes)
+             (cond
+               ((equalp bytes +startxref+) +kwd-startxref+)
+               ((equalp bytes +trailer+) +kwd-trailer+)
+               ((equalp bytes +xref+) +kwd-xref+)
+               ((equalp bytes +obj+) +kwd-obj+)
+               ((equalp bytes +endobj+) +kwd-endobj+)
+               ((equalp bytes +r+) +kwd-r+)
+               (t (error "Unrecognized keyword"))))
+           (read-kwd-rec (ch
+                          &optional
+                          (bytes
+                           (make-array 1
+                                       :fill-pointer 0
+                                       :element-type '(unsigned-byte 8)
+                                       :adjustable t)))
+             (if (not (alpha-p ch))
+               (progn
+                 (file-position file-handle
+                                (1- (file-position file-handle)))
+                 (kwd-from bytes))
+               (progn
+                 (vector-push-extend ch bytes)
+                 (read-kwd-rec (read-next) bytes)))))
+    (read-kwd-rec first-char)))
+
+(defmacro comment (&rest forms)
+  (declare (ignore forms))
+  nil)
+
+(comment
   (asdf:clear-system "pdf-editor")
   (asdf:load-system "pdf-editor")
   (defvar *test-pdf* (load-pdf #P"~/Downloads/tess_test.pdf"))

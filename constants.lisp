@@ -1,21 +1,33 @@
 (in-package #:com.bhester.reader)
 
-(defmacro define-keyword-constant (name const-string)
-  `(alexandria:define-constant ,name
-                               (map '(vector (unsigned-byte 8))
-                                    #'char-code
-                                    ,const-string)
-                               :test #'equalp))
+(defmacro define-keyword-bytes (name const-string)
+  `(alexandria:define-constant
+    ,name
+    (map '(vector (unsigned-byte 8))
+         #'char-code
+         ,const-string)
+    :test #'equalp))
 
-(alexandria:define-constant +return-char+ (char-code #\Return))
-(alexandria:define-constant +feed-char+ (char-code #\LineFeed))
+(defmacro define-keyword-constant (name bytes)
+  `(defvar
+    ,name
+    (make-instance 'pdf-keyword
+                   :keyword-bytes ,bytes)))
 
-(define-keyword-constant +header-beginning+ "%PDF-")
-(define-keyword-constant +eof-sym+ "%%EOF")
+(defmacro define-keyword (const-string)
+  (let ((bytes-name (format nil "+~a+" (string-upcase const-string)))
+        (kwd-name (format nil "+KWD-~a+" (string-upcase const-string))))
+    `(progn (define-keyword-bytes ,(intern bytes-name)
+                                  ,const-string)
+            (define-keyword-constant ,(intern kwd-name)
+                                     ,(intern bytes-name)))))
 
-(define-keyword-constant +startxref+ "startxref")
-(define-keyword-constant +trailer+ "trailer")
-(define-keyword-constant +xref+ "xref")
+(define-keyword-bytes +header-beginning+ "%PDF-")
+(define-keyword-bytes +eof-sym+ "%%EOF")
 
-(alexandria:define-constant +line-endings+ `(,+return-char+ ,+feed-char+)
-                            :test #'equalp)
+(define-keyword "startxref")
+(define-keyword "trailer")
+(define-keyword "xref")
+(define-keyword "obj")
+(define-keyword "endobj")
+(define-keyword "R")
