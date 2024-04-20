@@ -16,8 +16,8 @@
           (read-version-specifier pdf-wrapper line-ending))
     (setf (slot-value pdf-wrapper '%cross-ref-start)
           (find-cross-ref-start pdf-wrapper))
-    (setf (slot-value pdf-wrapper '%trailer-start)
-          (find-trailer-start pdf-wrapper))))
+    (setf (slot-value pdf-wrapper '%trailer)
+          (read-trailer pdf-wrapper))))
 
 (defmethod read-bytes ((pdf-wrapper pdf-wrapper)
                        &key
@@ -58,13 +58,11 @@
       (file-position file-handle (1- (file-position file-handle))))
     res))
 
-(defmethod scan-forward-line ((pdf-wrapper pdf-wrapper))
-  (let ((file-handle (pdf-handle pdf-wrapper))
-        (line-ending (pdf-line-ending pdf-wrapper)))
-    (futils:read-to-line-ending file-handle line-ending)
-    (file-position file-handle
-                   (+ (file-position file-handle)
-                      (if (eq line-ending :crlf) 2 1)))))
+(defun scan-forward-line (file-handle line-ending)
+  (futils:read-to-line-ending file-handle line-ending)
+  (file-position file-handle
+                 (+ (file-position file-handle)
+                    (if (eq line-ending :crlf) 2 1))))
 
 (defmethod scan-back-line ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
@@ -122,14 +120,14 @@
       (if (not (equalp arr +startxref+))
         (error "Error Reading PDF. Could not find `startxref` keyword")
         (progn
-          (scan-forward-line pdf-wrapper)
+          (scan-forward-line file-handle line-ending)
           (let ((offset (read-object file-handle line-ending)))
             (assert (eq (type-of offset) 'pdf-number))
             (if (<= (file-length file-handle) (numeric-value offset))
               (error "Invalid offset for cross-reference"))
             (numeric-value offset)))))))
 
-(defmethod find-trailer-start ((pdf-wrapper pdf-wrapper))
+(defmethod read-trailer ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
         (line-ending (pdf-line-ending pdf-wrapper))
         (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
@@ -137,21 +135,80 @@
     (let ((kwd (read-object file-handle line-ending)))
       (if (not (eq kwd +kwd-xref+))
         (error "Invalid cross-reference section"))
-      (do ((section (read-cross-reference-subsection file-handle)
-                    (read-cross-reference-subsection file-handle)))
-          ((eq section +trailer+))
-        ;; TODO: resolve this infinite loop by implementing read subsection
-        nil))
-    ;; TODO: read the xref keyword, and then skip the appropriate number of
-    ;; lines to get past all the cross reference subsections, until hitting the
-    ;; trailer and then return the byte offset
-    ))
+      (let* ((xref-section (read-cross-reference-section pdf-wrapper))
+             (trailer-kwd (read-object file-handle line-ending)))
+        (assert (eq trailer-kwd +kwd-trailer+))
+        ;; TODO: read the trailer dictionary to know if there is more stuff to
+        ;; read (like a previous xref section)
+        (make-instance 'trailer
+                       :cross-ref-section xref-section)))))
 
-(defun read-cross-reference-subsection (file-handle)
-  ;; read an object. if it's an integer, it's a subsection
-  ;; otherwise it should be the keyword `trailer`
-  (declare (ignore file-handle))
-  )
+(defmethod read-cross-reference-section ((pdf-wrapper pdf-wrapper))
+  (let ((file-handle (pdf-handle pdf-wrapper))
+        (line-ending (pdf-line-ending pdf-wrapper)))
+    (labels ((read-next ()
+               (let ((subsection (read-cross-reference-subsection
+                                  file-handle
+                                  line-ending)))
+                 (if (eq subsection +kwd-trailer+)
+                   (progn
+                     (file-position file-handle
+                                    (- (file-position file-handle)
+                                       (length +trailer+)))
+                     '())
+                   (append subsection (read-next))))))
+      (read-next))))
+
+(defun read-cross-reference-subsection (file-handle line-ending)
+  (let ((start-obj (read-object file-handle line-ending)))
+    (if (eq start-obj +kwd-trailer+)
+      start-obj
+      (let ((count-obj (read-object file-handle line-ending)))
+        (assert (and (typep start-obj 'pdf-number)
+                     (typep count-obj 'pdf-number)))
+        (let ((start-obj-num (numeric-value start-obj))
+              (count-obj-num (numeric-value count-obj)))
+          (labels ((read-entries (obj-num left &optional (entries nil))
+                     (if (zerop left)
+                       (nreverse entries)
+                       (let ((new (read-cross-reference-entry
+                                   file-handle
+                                   obj-num)))
+                         (read-entries (1+ obj-num)
+                                       (1- left)
+                                       (cons new entries))))))
+            (scan-forward-line file-handle line-ending)
+            (read-entries start-obj-num count-obj-num)))))))
+
+(defun read-cross-reference-entry (file-handle obj-num)
+  (let ((buf (make-array 20 :element-type '(unsigned-byte 8))))
+    (read-sequence buf file-handle)
+    (labels ((read-num (digits idx &optional (cur 0))
+               (if (zerop digits)
+                 cur
+                 (let* ((ch (elt buf idx))
+                        (dig (code->int ch)))
+                   (read-num (1- digits)
+                             (1+ idx)
+                             (+ (* 10 cur)
+                                dig))))))
+      (let ((byte-off (read-num 10 0))
+            (gen-num (read-num 5 11))
+            (type-char (elt buf 17)))
+        (assert (member type-char (list (char-code #\f)
+                                        (char-code #\n))))
+        (let ((free-p (eq (char-code #\f) type-char)))
+          (if free-p
+            (make-instance 'indirect-obj-ref
+                           :allocation :free
+                           :next-free-obj byte-off
+                           :object-number obj-num
+                           :generation-number gen-num)
+            (make-instance 'indirect-obj-ref
+                           :allocation :allocated
+                           :byte-offset byte-off
+                           :object-number obj-num
+                           :generation-number gen-num)))))))
 
 (defun alpha-p (ch)
   (or (<= (char-code #\a) ch (char-code #\z))
@@ -271,6 +328,8 @@
                ((equalp bytes +obj+) +kwd-obj+)
                ((equalp bytes +endobj+) +kwd-endobj+)
                ((equalp bytes +r+) +kwd-r+)
+               ((equalp bytes +f+) +kwd-f+)
+               ((equalp bytes +n+) +kwd-n+)
                (t (error "Unrecognized keyword"))))
            (read-kwd-rec (ch
                           &optional

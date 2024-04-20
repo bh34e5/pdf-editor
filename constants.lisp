@@ -25,9 +25,15 @@
 (define-keyword-bytes +header-beginning+ "%PDF-")
 (define-keyword-bytes +eof-sym+ "%%EOF")
 
+;; TODO: make this into a list of keyword byte arrays so that I can test for
+;; memebr equality instead of individual checks. And so I can only add in one
+;; place instead of two.
+
 (define-keyword "startxref")
 (define-keyword "trailer")
 (define-keyword "xref")
 (define-keyword "obj")
 (define-keyword "endobj")
 (define-keyword "R")
+(define-keyword "f")
+(define-keyword "n")
