@@ -37,3 +37,10 @@
 (define-keyword "R")
 (define-keyword "f")
 (define-keyword "n")
+
+;;; TODO: make these into actual null/boolean objects...
+;;; NOTE: they are also not being checked in the `read-keyword` function, so I
+;;; will need to add something to read these as objects as well.
+(define-keyword "null")
+(define-keyword "true")
+(define-keyword "false")

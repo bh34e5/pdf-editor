@@ -199,12 +199,12 @@
                                         (char-code #\n))))
         (let ((free-p (eq (char-code #\f) type-char)))
           (if free-p
-            (make-instance 'indirect-obj-ref
+            (make-instance 'indirect-obj-ref-info
                            :allocation :free
                            :next-free-obj byte-off
                            :object-number obj-num
                            :generation-number gen-num)
-            (make-instance 'indirect-obj-ref
+            (make-instance 'indirect-obj-ref-info
                            :allocation :allocated
                            :byte-offset byte-off
                            :object-number obj-num
@@ -226,22 +226,96 @@
                #x20  ;; Space
                )))
 
+(defun delimiter-p (ch)
+  (member (code-char ch) '(#\( #\) #\< #\> #\[ #\] #\{ #\} #\/ #\%)))
+
+(defun hex-p (ch)
+  (or (digit-p ch)
+      (<= (char-code #\a) ch (char-code #\f))
+      (<= (char-code #\A) ch (char-code #\F))))
+
+(defun int-from-hex-char (ch)
+  (assert (hex-p ch))
+  (cond ((digit-p ch)            (- ch (char-code #\0)))
+        ((>= ch (char-code #\a)) (- ch (char-code #\a)))
+        ((>= ch (char-code #\A)) (- ch (char-code #\A)))))
+
+(defun char-from-hex (&rest hex-digs)
+  (labels ((rec (digs &optional (cur 0))
+             (cond ((null digs) cur)
+                   (t (rec (rest digs)
+                           (+ (* 16 cur)
+                              (int-from-hex-char (first digs))))))))
+    (rec hex-digs)))
+
 (defun read-object (file-handle line-ending)
-  (let ((c (read-byte file-handle)))
-    (cond ((eq (char-code #\%) c)
+  (let ((ch (read-byte file-handle)))
+    (cond ((eq (char-code #\%) ch)
            (futils:read-to-line-ending file-handle line-ending)
            (read-object file-handle line-ending))
-          ((whitespace-p c)
+          ((eq (char-code #\/) ch)
+           (read-name file-handle))
+          ((eq (char-code #\[) ch)
+           (read-array file-handle line-ending))
+          ((eq (char-code #\() ch)
+           (read-ascii-string file-handle line-ending))
+          ((eq (char-code #\<) ch)
+           (read-possible-dictionary file-handle line-ending))
+          ((or (eq ch (char-code #\.))
+               (eq ch (char-code #\+))
+               (eq ch (char-code #\-)))
+           (read-number file-handle ch))
+          ((whitespace-p ch)
            ;; already incremented with the read, so just try again
            (read-object file-handle line-ending))
-          ((digit-p c)
-           (read-possible-object file-handle c line-ending))
-          ((or (eq c (char-code #\.))
-               (eq c (char-code #\+))
-               (eq c (char-code #\-)))
-           (read-number file-handle c))
-          ((alpha-p c) (read-keyword file-handle c))
+          ((digit-p ch)
+           (read-possible-object file-handle ch line-ending))
+          ((alpha-p ch) (read-keyword file-handle ch))
           (t (error "Unimplemented object")))))
+
+(defun read-name (file-handle)
+  (let ((bytes (make-array 1
+                           :element-type '(unsigned-byte 8)
+                           :fill-pointer 0
+                           :adjustable t)))
+    (labels ((unread-and-return ()
+               (file-position file-handle
+                              (1- (file-position file-handle)))
+               bytes)
+             (read-escaped-char ()
+               (let* ((first-char (read-byte file-handle))
+                      (second-char (read-byte file-handle)))
+                 (vector-push-extend (char-from-hex first-char second-char)
+                                     bytes)))
+             (read-next ()
+               (let ((ch (read-byte file-handle)))
+                 (cond ((or (whitespace-p ch)
+                            (delimiter-p ch))
+                        (unread-and-return))
+                       ((eq (char-code #\#) ch)
+                        (read-escaped-char)
+                        (read-next))
+                       (t
+                        (vector-push-extend ch bytes)
+                        (read-next))))))
+      (read-next))))
+
+(defun read-array (file-handle line-ending)
+  (labels ((reset-and-read ()
+             (file-position file-handle
+                            (1- (file-position file-handle)))
+             (read-object file-handle line-ending))
+           (read-next (&optional (objs nil))
+             (let ((ch (read-byte file-handle)))
+               (cond ((eq (char-code #\]) ch) (nreverse objs))
+                     (t (read-next (cons (reset-and-read) objs)))))))
+    (make-instance 'pdf-array
+                   :objects (read-next))))
+
+(defun read-ascii-string (file-handle line-ending) (error "Unimplemented"))
+
+(defun read-possible-dictionary (file-handle line-ending)
+  (error "Unimplemented"))
 
 (defun read-possible-object (file-handle first-char line-ending)
   (let* ((num (read-number file-handle first-char))
@@ -260,11 +334,18 @@
                        (if (and (typep third-obj 'pdf-keyword)
                                 (or (eq third-obj +kwd-obj+)
                                     (eq third-obj +kwd-r+)))
-                         (if (eq third-obj +kwd-r+)
-                           ;; TODO: return indirect object reference
-                           nil
-                           ;; TODO: continue reading the object
-                           nil)
+                         (let ((obj-num (numeric-value num))
+                               (gen-num (numeric-value next-obj)))
+                           (if (eq third-obj +kwd-r+)
+                             (make-instance 'indirect-obj-ref
+                                            :object-number obj-num
+                                            :generation-number gen-num)
+                             (make-instance 'indirect-obj
+                                            :object-number obj-num
+                                            :generation-number gen-num
+                                            :object (read-object
+                                                     file-handle
+                                                     line-ending))))
                          ;; this wasn't an object / reference after all.
                          ;; return the number
                          (progn

@@ -20,6 +20,20 @@
 (defclass pdf-object ()
   ((%obj-type :reader obj-type)))
 
+(defclass pdf-name (pdf-object)
+  ((%obj-type :initform :pdf-name)
+   (%name-bytes
+    :reader name-bytes
+    :initarg :bytes
+    :initform (error "Name bytes required"))))
+
+(defclass pdf-array (pdf-object)
+  ((%obj-type :initform :pdf-name)
+   (%objects
+    :reader objects
+    :initarg :objects
+    :initform (error "Array objects required"))))
+
 (defclass pdf-number (pdf-object)
   ((%obj-type :initform :pdf-number)
    (%num-type
@@ -39,10 +53,35 @@
     :initarg :keyword-bytes
     :initform (error "Character bytes required for keyword"))))
 
+(defclass indirect-obj (pdf-object)
+  ((%obj-type :initform :pdf-indirect-obj)
+   (%object-number
+    :reader object-number
+    :initarg :object-number
+    :initform (error "Object number required"))
+   (%generation-number
+    :reader object-generation-number
+    :initarg :generation-number
+    :initform (error "Generation number required"))
+   (%object
+    :reader indirect-obj-value
+    :initarg :object
+    :initform (error "Object required"))))
+
 (defclass indirect-obj-ref (pdf-object)
   ((%obj-type :initform :pdf-indirect-obj-ref)
-   (%allocation
-    :reader ref-allocation
+   (%object-number
+    :reader object-number
+    :initarg :object-number
+    :initform (error "Object number required"))
+   (%generation-number
+    :reader object-generation-number
+    :initarg :generation-number
+    :initform (error "Generation number required"))))
+
+(defclass indirect-obj-ref-info ()
+  ((%allocation
+    :reader ref-info-allocation
     :type (member :free :allocated)
     :initarg :allocation
     :initform (error "Reference allocation type required"))
