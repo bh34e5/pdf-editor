@@ -34,6 +34,13 @@
     :initarg :objects
     :initform (error "Array objects required"))))
 
+(defclass pdf-string (pdf-object)
+  ((%obj-type :initform :pdf-string)
+   (%bytes
+    :reader string-bytes
+    :initarg :bytes
+    :initform (error "String bytes required"))))
+
 (defclass pdf-number (pdf-object)
   ((%obj-type :initform :pdf-number)
    (%num-type

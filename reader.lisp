@@ -314,7 +314,34 @@
 
 (defun read-ascii-string (file-handle line-ending) (error "Unimplemented"))
 
+(defun read-hex-string (file-handle first-char)
+  (labels ((read-first-char (bytes)
+             (let ((ch (read-byte file-handle)))
+               (cond ((eq (char-code #\>) ch)
+                      (nreverse bytes))
+                     ((whitespace-p ch) (read-first-char bytes))
+                     (t (read-second-char ch)))))
+           (read-second-char (first-char &optional (bytes nil))
+             (let ((ch (read-byte file-handle)))
+               (cond ((eq (char-code #\>) ch)
+                      (nreverse (cons (char-from-hex first-char
+                                                     (char-code #\0))
+                                      bytes)))
+                     ((whitespace-p ch) (read-second-char first-char bytes))
+                     (t (read-first-char (cons (char-from-hex first-char ch)
+                                               bytes)))))))
+    ;; TODO: handle the case when the first passed character is a whitespace
+    ;; character
+    (make-instance 'pdf-string
+                   :bytes (read-second-char first-char))))
+
 (defun read-possible-dictionary (file-handle line-ending)
+  (let ((first-char (read-byte file-handle)))
+    (if (eq (char-code #\<) first-char)
+      (read-hex-string first-char)
+      (read-dictionary file-handle line-ending))))
+
+(defun read-dictionary (file-handle line-ending)
   (error "Unimplemented"))
 
 (defun read-possible-object (file-handle first-char line-ending)
