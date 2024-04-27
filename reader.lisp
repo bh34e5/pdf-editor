@@ -49,6 +49,40 @@
             (file-position file-handle (- (file-position file-handle) num)))
           container)))))
 
+(defmethod get-object-reference ((pdf-wrapper pdf-wrapper) obj-num gen-num)
+  (labels ((find-in-trailer (trailer)
+             (when (null trailer)
+               (error "Object reference not found"))
+             (let* ((xref-section (cross-ref-section trailer))
+                    (prev (previous-trailer trailer))
+                    (find-res (find-object-ref-info
+                               xref-section
+                               obj-num
+                               gen-num)))
+               (if (null find-res)
+                 (find-in-trailer prev)
+                 find-res))))
+    (let ((trailer (pdf-trailer pdf-wrapper)))
+      (find-in-trailer trailer))))
+
+(defun find-object-ref-info (xref-section obj-num gen-num)
+  ;; TODO: for now this xref-section is just a list
+  (find-if (lambda (el)
+             (and (typep el 'indirect-obj-ref-info)
+                  (eq (ref-info-allocation el)
+                      :allocated)
+                  (= (object-number el) obj-num)
+                  (= (object-generation-number el) gen-num)))
+           xref-section))
+
+(defmethod read-object-number ((pdf-wrapper pdf-wrapper) obj-num gen-num)
+  (let ((ref-obj (get-object-reference pdf-wrapper obj-num gen-num)))
+    (let ((byte-off (object-byte-offset ref-obj))
+          (file-handle (pdf-handle pdf-wrapper))
+          (line-ending (pdf-line-ending pdf-wrapper)))
+      (file-position file-handle byte-off)
+      (read-object file-handle line-ending))))
+
 (defun read-single-byte (file-handle direction)
   (let ((res))
     (if (eq direction :backward)
@@ -338,8 +372,8 @@
 (defun read-possible-dictionary (file-handle line-ending)
   (let ((first-char (read-byte file-handle)))
     (if (eq (char-code #\<) first-char)
-      (read-hex-string file-handle first-char)
-      (read-dictionary file-handle line-ending))))
+      (read-dictionary file-handle line-ending)
+      (read-hex-string file-handle first-char))))
 
 (defun read-dictionary (file-handle line-ending)
   (error "Unimplemented"))
@@ -367,6 +401,8 @@
                              (make-instance 'indirect-obj-ref
                                             :object-number obj-num
                                             :generation-number gen-num)
+                             ;; TODO: add the read of the `endobj` keyword to
+                             ;; ensure the reading is as expected
                              (make-instance 'indirect-obj
                                             :object-number obj-num
                                             :generation-number gen-num
