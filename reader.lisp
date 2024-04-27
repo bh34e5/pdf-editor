@@ -65,6 +65,14 @@
     (let ((trailer (pdf-trailer pdf-wrapper)))
       (find-in-trailer trailer))))
 
+(defmethod get-key ((dictionary pdf-dictionary) (key pdf-name))
+  (let ((res (find-if (lambda (el)
+                        (let ((entry-name (car el)))
+                          (equalp (name-bytes entry-name) (name-bytes key))))
+                      (key-value-pairs dictionary))))
+    (when res
+      (cdr res))))
+
 (defun find-object-ref-info (xref-section obj-num gen-num)
   ;; TODO: for now this xref-section is just a list
   (find-if (lambda (el)
@@ -75,6 +83,14 @@
                   (= (object-generation-number el) gen-num)))
            xref-section))
 
+(defmethod read-object-from-ref ((pdf-wrapper pdf-wrapper)
+                                 (obj-ref indirect-obj-ref))
+  (let ((obj-num (object-number obj-ref))
+        (gen-num (object-generation-number obj-ref)))
+    ;; TODO assert value exists
+    (indirect-obj-value
+     (read-object-number pdf-wrapper obj-num gen-num))))
+
 (defmethod read-object-number ((pdf-wrapper pdf-wrapper) obj-num gen-num)
   (let ((ref-obj (get-object-reference pdf-wrapper obj-num gen-num)))
     (let ((byte-off (object-byte-offset ref-obj))
@@ -82,6 +98,32 @@
           (line-ending (pdf-line-ending pdf-wrapper)))
       (file-position file-handle byte-off)
       (read-object file-handle line-ending))))
+
+(defmethod page-count ((pdf-wrapper pdf-wrapper))
+  (let ((root-name (make-instance 'pdf-name
+                                  :bytes (map '(vector (unsigned-byte 8))
+                                              #'char-code
+                                              "Root")))
+        (pages-name (make-instance 'pdf-name
+                                   :bytes (map '(vector (unsigned-byte 8))
+                                               #'char-code
+                                               "Pages")))
+        (count-name (make-instance 'pdf-name
+                                   :bytes (map '(vector (unsigned-byte 8))
+                                               #'char-code
+                                               "Count"))))
+    (let* ((trailer (pdf-trailer pdf-wrapper))
+           (trailer-dict (trailer-dictionary trailer))
+           (root-obj-ref (get-key trailer-dict root-name))
+           (root-obj (read-object-from-ref pdf-wrapper root-obj-ref))
+           (pages-obj-ref (get-key root-obj pages-name))
+           (pages-obj (read-object-from-ref pdf-wrapper pages-obj-ref))
+           (count-obj (get-key pages-obj count-name)))
+      (cond ((typep count-obj 'pdf-number) (numeric-value count-obj))
+            ((typep count-obj 'indirect-obj-ref)
+             (let ((count-ref-obj (read-object-from-ref pdf-wrapper count-obj)))
+               (numeric-value count-ref-obj)))
+            (t (error "Invalid count type"))))))
 
 (defun read-single-byte (file-handle direction)
   (let ((res))
@@ -166,16 +208,37 @@
         (line-ending (pdf-line-ending pdf-wrapper))
         (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
     (file-position file-handle cross-ref-start)
-    (let ((kwd (read-object file-handle line-ending)))
-      (if (not (eq kwd +kwd-xref+))
-        (error "Invalid cross-reference section"))
-      (let* ((xref-section (read-cross-reference-section pdf-wrapper))
-             (trailer-kwd (read-object file-handle line-ending)))
-        (assert (eq trailer-kwd +kwd-trailer+))
-        ;; TODO: read the trailer dictionary to know if there is more stuff to
-        ;; read (like a previous xref section)
-        (make-instance 'trailer
-                       :cross-ref-section xref-section)))))
+    (labels ((read-from-kwd ()
+               (let ((kwd (read-object file-handle line-ending)))
+                 (if (not (eq kwd +kwd-xref+))
+                   (error "Invalid cross-reference section"))
+                 (let* ((xref-section (read-cross-reference-section
+                                       pdf-wrapper))
+                        (trailer-kwd (read-object file-handle line-ending)))
+                   (assert (eq trailer-kwd +kwd-trailer+))
+                   ;; TODO: read the trailer dictionary to know if there is more
+                   ;; stuff to read (like a previous xref section)
+                   (let ((trailer-dict (read-object file-handle line-ending)))
+                     (assert (typep trailer-dict 'pdf-dictionary))
+                     (let* ((prev-name (make-instance
+                                        'pdf-name
+                                        :bytes (map '(vector (unsigned-byte 8))
+                                                    #'char-code
+                                                    "Prev")))
+                            (prev-offset-num (get-key trailer-dict prev-name)))
+                       (if (not (null prev-offset-num))
+                         (progn
+                           (assert (typep prev-offset-num 'pdf-number))
+                           (file-position file-handle
+                                          (numeric-value prev-offset-num))
+                           (make-instance 'trailer
+                                          :prev (read-from-kwd)
+                                          :cross-ref-section xref-section
+                                          :dictionary trailer-dict))
+                         (make-instance 'trailer
+                                        :cross-ref-section xref-section
+                                        :dictionary trailer-dict))))))))
+      (read-from-kwd))))
 
 (defmethod read-cross-reference-section ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
@@ -282,6 +345,14 @@
                               (int-from-hex-char (first digs))))))))
     (rec hex-digs)))
 
+(define-condition invalid-object-condition (error)
+  ((offending-char :initarg :offending-char
+                   :reader offending-char))
+  (:report (lambda (condition stream)
+             (format stream
+                     "Could not read object because we encountered ~a.~&"
+                     (offending-char condition)))))
+
 (defun read-object (file-handle line-ending)
   (let ((ch (read-byte file-handle)))
     (cond ((eq (char-code #\%) ch)
@@ -305,7 +376,7 @@
           ((digit-p ch)
            (read-possible-object file-handle ch line-ending))
           ((alpha-p ch) (read-keyword file-handle ch))
-          (t (error "Unimplemented object")))))
+          (t (error 'invalid-object-condition :offending-char ch)))))
 
 (defun read-name (file-handle)
   (let ((bytes (make-array 1
@@ -332,7 +403,8 @@
                        (t
                         (vector-push-extend ch bytes)
                         (read-next))))))
-      (read-next))))
+      (make-instance 'pdf-name
+                     :bytes (read-next)))))
 
 (defun read-array (file-handle line-ending)
   (labels ((reset-and-read ()
@@ -341,7 +413,11 @@
              (read-object file-handle line-ending))
            (read-next (&optional (objs nil))
              (let ((ch (read-byte file-handle)))
-               (cond ((eq (char-code #\]) ch) (nreverse objs))
+               ;; TODO: need to check all the places that I'm expecting an
+               ;; ending delimeter and make sure that I take into account the
+               ;; possibility of whitespace
+               (cond ((whitespace-p ch) (read-next objs))
+                     ((eq (char-code #\]) ch) (nreverse objs))
                      (t (read-next (cons (reset-and-read) objs)))))))
     (make-instance 'pdf-array
                    :objects (read-next))))
@@ -390,7 +466,7 @@
                (cond ((eq (char-code #\>) ch)
                       (nreverse bytes))
                      ((whitespace-p ch) (read-first-char bytes))
-                     (t (read-second-char ch)))))
+                     (t (read-second-char ch bytes)))))
            (read-second-char (first-char &optional (bytes nil))
              (let ((ch (read-byte file-handle)))
                (cond ((eq (char-code #\>) ch)
@@ -473,6 +549,9 @@
                        num)))))
         (handler-case
             (try-second-and-third)
+          (invalid-object-condition ()
+            (file-position file-handle reset-position)
+            num)
           (end-of-file ()
             (file-position file-handle reset-position)
             num))))))
@@ -553,7 +632,6 @@
   (asdf:load-system "pdf-editor")
   (defvar *test-pdf* (load-pdf #P"~/Downloads/tess_test.pdf"))
   (pdf-header-version *test-pdf*)
-  (pdf-trailer-start *test-pdf*)
   (eq (char-code #\Space) (char-code #\Space))
   (with-open-file (f #P"~/Downloads/sobel.pdf" :element-type '(unsigned-byte 8))
     (read-version-specifier f))

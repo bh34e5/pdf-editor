@@ -35,7 +35,7 @@
     :initform (error "Dictionary elements required"))))
 
 (defclass pdf-array (pdf-object)
-  ((%obj-type :initform :pdf-name)
+  ((%obj-type :initform :pdf-array)
    (%objects
     :reader objects
     :initarg :objects
@@ -134,4 +134,8 @@
     :initarg :cross-ref-section
     ;; TODO: figure out how to type this...
     ;; :type 'cross-ref-section
-    :initform (error "Cross reference section required"))))
+    :initform (error "Cross reference section required"))
+   (%trailer-dict
+    :reader trailer-dictionary
+    :initarg :dictionary
+    :initform (error "Trailer dictionary required"))))
