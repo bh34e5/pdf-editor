@@ -338,7 +338,7 @@
 (defun read-possible-dictionary (file-handle line-ending)
   (let ((first-char (read-byte file-handle)))
     (if (eq (char-code #\<) first-char)
-      (read-hex-string first-char)
+      (read-hex-string file-handle first-char)
       (read-dictionary file-handle line-ending))))
 
 (defun read-dictionary (file-handle line-ending)
