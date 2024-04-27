@@ -27,6 +27,13 @@
     :initarg :bytes
     :initform (error "Name bytes required"))))
 
+(defclass pdf-dictionary (pdf-object)
+  ((%obj-type :initform :pdf-dictionary)
+   (%pairs
+    :reader key-value-pairs
+    :initarg :pairs
+    :initform (error "Dictionary elements required"))))
+
 (defclass pdf-array (pdf-object)
   ((%obj-type :initform :pdf-name)
    (%objects

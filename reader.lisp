@@ -376,7 +376,23 @@
       (read-hex-string file-handle first-char))))
 
 (defun read-dictionary (file-handle line-ending)
-  (error "Unimplemented"))
+  (labels ((read-entry ()
+             (let ((name (read-name file-handle))
+                   (value (read-object file-handle line-ending)))
+               ;; TODO: return actual objects (maybe). Just until it works,
+               ;; using a-list (ordered in the same way the objects are read)
+               (cons name value)))
+           (read-entries (&optional (entries nil))
+             (let ((ch (read-byte file-handle)))
+               (cond ((eq (char-code #\>) ch)
+                      (nreverse entries))
+                     ((whitespace-p ch)
+                      (read-entries entries))
+                     ((eq (char-code #\/) ch)
+                      (read-entries (cons (read-entry)
+                                          entries)))))))
+    (make-instance 'pdf-dictionary
+                   :pairs (read-entries))))
 
 (defun read-possible-object (file-handle first-char line-ending)
   (let* ((num (read-number file-handle first-char))
