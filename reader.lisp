@@ -346,7 +346,43 @@
     (make-instance 'pdf-array
                    :objects (read-next))))
 
-(defun read-ascii-string (file-handle line-ending) (error "Unimplemented"))
+(defun read-ascii-string (file-handle line-ending)
+  (let ((bytes (make-array 8
+                           :element-type '(unsigned-byte 8)
+                           :fill-pointer 0
+                           :adjustable t)))
+    (labels ((push-and-continue (ch depth)
+               (vector-push-extend ch bytes)
+               (read-next depth))
+             (read-line-end (depth)
+               (cond ((eq :crlf line-ending)
+                      (let ((next-char (read-byte file-handle)))
+                        (if (eq futils:+feed-char+ next-char)
+                          (push-and-continue futils:+feed-char+ depth)
+                          (progn
+                            ;; unread the character
+                            (file-position file-handle
+                                           (1- (file-position file-handle)))
+                            (push-and-continue futils:+return-char+ depth)))))
+                     ((eq :cr line-ending)
+                      (push-and-continue futils:+feed-char+ depth))
+                     ((eq :lf line-ending)
+                      (push-and-continue futils:+return-char+ depth))))
+             (read-escape () (error "Unimplemented"))
+             (read-next (&optional (depth 0))
+               (let ((ch (read-byte file-handle)))
+                 (cond ((eq (char-code #\() ch)
+                        (push-and-continue ch (1+ depth)))
+                       ((eq (char-code #\)) ch)
+                        (if (zerop depth)
+                          bytes
+                          (push-and-continue ch (1- depth))))
+                       ((eq (char-code #\\) ch)
+                        (push-and-continue (read-escape) depth))
+                       ((eq futils:+return-char+ ch)
+                        (read-line-end depth))
+                       (t (push-and-continue ch depth))))))
+      (read-next))))
 
 (defun read-hex-string (file-handle first-char)
   (labels ((read-first-char (bytes)
