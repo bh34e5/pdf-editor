@@ -40,6 +40,8 @@
 (define-keyword "xref")
 (define-keyword "obj")
 (define-keyword "endobj")
+(define-keyword "stream")
+(define-keyword "endstream")
 (define-keyword "R")
 (define-keyword "f")
 (define-keyword "n")
@@ -76,6 +78,7 @@
 ;;; Frequently used names
 
 (define-name "Count")
+(define-name "Length")
 (define-name "Pages")
 (define-name "Prev")
 (define-name "Root")

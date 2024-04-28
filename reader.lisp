@@ -193,7 +193,6 @@
 
 (defmethod read-trailer ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
-        (line-ending (pdf-line-ending pdf-wrapper))
         (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
     (file-position file-handle cross-ref-start)
     (read-trailer-from-kwd pdf-wrapper)))
@@ -467,8 +466,47 @@
 (defun read-possible-dictionary (file-handle line-ending)
   (let ((first-char (read-byte file-handle)))
     (if (eq (char-code #\<) first-char)
-      (read-dictionary file-handle line-ending)
+      (read-possible-stream file-handle line-ending)
       (read-hex-string file-handle first-char))))
+
+(defun read-possible-stream (file-handle line-ending)
+  (let* ((dict (read-dictionary file-handle line-ending))
+         (reset-position (file-position file-handle)))
+    (assert (typep dict 'pdf-dictionary))
+    (labels ((reset-and-return ()
+               (file-position file-handle reset-position)
+               dict))
+      (handler-case
+          (let ((next-obj (read-object file-handle line-ending)))
+            (if (not (eq next-obj +kwd-stream+))
+              (reset-and-return)
+              (make-instance 'pdf-stream
+                             :dictionary dict
+                             :encoded-bytes (read-stream-bytes file-handle
+                                                               line-ending
+                                                               dict))))
+        (invalid-object-condition ()
+          (reset-and-return))
+        (end-of-file ()
+          (reset-and-return))))))
+
+(defun read-stream-bytes (file-handle line-ending stream-dictionary)
+  (let ((stm-length (get-key stream-dictionary +name-length+)))
+    ;; No support for reading streams with indirect lengths yet
+    (assert (typep stm-length 'pdf-number))
+    (let ((res-array (make-array (numeric-value stm-length)
+                                  :element-type '(unsigned-byte 8))))
+      ;; read the next line... the line ending must either be a single line feed
+      ;; or a carriage return followed by a line feed... no single carriage return
+      ;; is allowed
+      (cond ((eq line-ending :lf)
+             (file-position file-handle
+                            (1+ (file-position file-handle))))
+            (t
+             (file-position file-handle
+                            (+ 2 (file-position file-handle)))))
+      (read-sequence res-array file-handle)
+      res-array)))
 
 (defun read-dictionary (file-handle line-ending)
   (labels ((read-entry ()
@@ -477,10 +515,13 @@
                ;; TODO: return actual objects (maybe). Just until it works,
                ;; using a-list (ordered in the same way the objects are read)
                (cons name value)))
+           (finish-dict (entries)
+             (read-byte file-handle) ;; read the second #\>
+             (nreverse entries))
            (read-entries (&optional (entries nil))
              (let ((ch (read-byte file-handle)))
                (cond ((eq (char-code #\>) ch)
-                      (nreverse entries))
+                      (finish-dict entries))
                      ((whitespace-p ch)
                       (read-entries entries))
                      ((eq (char-code #\/) ch)
@@ -585,6 +626,8 @@
                ((equalp bytes +xref+) +kwd-xref+)
                ((equalp bytes +obj+) +kwd-obj+)
                ((equalp bytes +endobj+) +kwd-endobj+)
+               ((equalp bytes +stream+) +kwd-stream+)
+               ((equalp bytes +endstream+) +kwd-endstream+)
                ((equalp bytes +r+) +kwd-r+)
                ((equalp bytes +f+) +kwd-f+)
                ((equalp bytes +n+) +kwd-n+)

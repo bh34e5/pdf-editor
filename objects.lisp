@@ -34,6 +34,20 @@
     :initarg :pairs
     :initform (error "Dictionary elements required"))))
 
+(defclass pdf-stream (pdf-object)
+  ((%obj-type :initform :pdf-stream)
+   (%dict
+    :reader stream-dictionary
+    :initarg :dictionary
+    :initform (error "Stream dictionary required"))
+   (%encoded-bytes
+    :initarg :encoded-bytes
+    :initform (error "Encoded bytes required"))
+   ;; TODO: define a method to get the stream bytes and decode (and then store)
+   ;; on the first access to them
+   (%decoded-bytes
+    :initform nil)))
+
 (defclass pdf-array (pdf-object)
   ((%obj-type :initform :pdf-array)
    (%objects
