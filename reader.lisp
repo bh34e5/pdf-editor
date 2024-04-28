@@ -49,6 +49,15 @@
             (file-position file-handle (- (file-position file-handle) num)))
           container)))))
 
+(defun read-single-byte (file-handle direction)
+  (let ((res))
+    (if (eq direction :backward)
+      (file-position file-handle (1- (file-position file-handle))))
+    (setf res (read-byte file-handle))
+    (if (eq direction :backward)
+      (file-position file-handle (1- (file-position file-handle))))
+    res))
+
 (defmethod get-object-reference ((pdf-wrapper pdf-wrapper) obj-num gen-num)
   (labels ((find-in-trailer (trailer)
              (when (null trailer)
@@ -100,39 +109,18 @@
       (read-object file-handle line-ending))))
 
 (defmethod page-count ((pdf-wrapper pdf-wrapper))
-  (let ((root-name (make-instance 'pdf-name
-                                  :bytes (map '(vector (unsigned-byte 8))
-                                              #'char-code
-                                              "Root")))
-        (pages-name (make-instance 'pdf-name
-                                   :bytes (map '(vector (unsigned-byte 8))
-                                               #'char-code
-                                               "Pages")))
-        (count-name (make-instance 'pdf-name
-                                   :bytes (map '(vector (unsigned-byte 8))
-                                               #'char-code
-                                               "Count"))))
-    (let* ((trailer (pdf-trailer pdf-wrapper))
-           (trailer-dict (trailer-dictionary trailer))
-           (root-obj-ref (get-key trailer-dict root-name))
-           (root-obj (read-object-from-ref pdf-wrapper root-obj-ref))
-           (pages-obj-ref (get-key root-obj pages-name))
-           (pages-obj (read-object-from-ref pdf-wrapper pages-obj-ref))
-           (count-obj (get-key pages-obj count-name)))
-      (cond ((typep count-obj 'pdf-number) (numeric-value count-obj))
-            ((typep count-obj 'indirect-obj-ref)
-             (let ((count-ref-obj (read-object-from-ref pdf-wrapper count-obj)))
-               (numeric-value count-ref-obj)))
-            (t (error "Invalid count type"))))))
-
-(defun read-single-byte (file-handle direction)
-  (let ((res))
-    (if (eq direction :backward)
-      (file-position file-handle (1- (file-position file-handle))))
-    (setf res (read-byte file-handle))
-    (if (eq direction :backward)
-      (file-position file-handle (1- (file-position file-handle))))
-    res))
+  (let* ((trailer (pdf-trailer pdf-wrapper))
+         (trailer-dict (trailer-dictionary trailer))
+         (root-obj-ref (get-key trailer-dict +name-root+))
+         (root-obj (read-object-from-ref pdf-wrapper root-obj-ref))
+         (pages-obj-ref (get-key root-obj +name-pages+))
+         (pages-obj (read-object-from-ref pdf-wrapper pages-obj-ref))
+         (count-obj (get-key pages-obj +name-count+)))
+    (cond ((typep count-obj 'pdf-number) (numeric-value count-obj))
+          ((typep count-obj 'indirect-obj-ref)
+           (let ((count-ref-obj (read-object-from-ref pdf-wrapper count-obj)))
+             (numeric-value count-ref-obj)))
+          (t (error "Invalid count type")))))
 
 (defun scan-forward-line (file-handle line-ending)
   (futils:read-to-line-ending file-handle line-ending)
@@ -208,37 +196,32 @@
         (line-ending (pdf-line-ending pdf-wrapper))
         (cross-ref-start (pdf-cross-ref-start pdf-wrapper)))
     (file-position file-handle cross-ref-start)
-    (labels ((read-from-kwd ()
-               (let ((kwd (read-object file-handle line-ending)))
-                 (if (not (eq kwd +kwd-xref+))
-                   (error "Invalid cross-reference section"))
-                 (let* ((xref-section (read-cross-reference-section
-                                       pdf-wrapper))
-                        (trailer-kwd (read-object file-handle line-ending)))
-                   (assert (eq trailer-kwd +kwd-trailer+))
-                   ;; TODO: read the trailer dictionary to know if there is more
-                   ;; stuff to read (like a previous xref section)
-                   (let ((trailer-dict (read-object file-handle line-ending)))
-                     (assert (typep trailer-dict 'pdf-dictionary))
-                     (let* ((prev-name (make-instance
-                                        'pdf-name
-                                        :bytes (map '(vector (unsigned-byte 8))
-                                                    #'char-code
-                                                    "Prev")))
-                            (prev-offset-num (get-key trailer-dict prev-name)))
-                       (if (not (null prev-offset-num))
-                         (progn
-                           (assert (typep prev-offset-num 'pdf-number))
-                           (file-position file-handle
-                                          (numeric-value prev-offset-num))
-                           (make-instance 'trailer
-                                          :prev (read-from-kwd)
-                                          :cross-ref-section xref-section
-                                          :dictionary trailer-dict))
-                         (make-instance 'trailer
-                                        :cross-ref-section xref-section
-                                        :dictionary trailer-dict))))))))
-      (read-from-kwd))))
+    (read-trailer-from-kwd pdf-wrapper)))
+
+(defun read-trailer-from-kwd (pdf-wrapper)
+  (let ((file-handle (pdf-handle pdf-wrapper))
+        (line-ending (pdf-line-ending pdf-wrapper)))
+    (let ((kwd (read-object file-handle line-ending)))
+      (if (not (eq kwd +kwd-xref+))
+        (error "Invalid cross-reference section"))
+      (let* ((xref-section (read-cross-reference-section pdf-wrapper))
+             (trailer-kwd (read-object file-handle line-ending)))
+        (assert (eq trailer-kwd +kwd-trailer+))
+        (let ((trailer-dict (read-object file-handle line-ending)))
+          (assert (typep trailer-dict 'pdf-dictionary))
+          (let ((prev-offset-num (get-key trailer-dict +name-prev+)))
+            (if (not (null prev-offset-num))
+              (progn
+                (assert (typep prev-offset-num 'pdf-number))
+                (file-position file-handle
+                               (numeric-value prev-offset-num))
+                (make-instance 'trailer
+                               :prev (read-trailer-from-kwd pdf-wrapper)
+                               :cross-ref-section xref-section
+                               :dictionary trailer-dict))
+              (make-instance 'trailer
+                             :cross-ref-section xref-section
+                             :dictionary trailer-dict))))))))
 
 (defmethod read-cross-reference-section ((pdf-wrapper pdf-wrapper))
   (let ((file-handle (pdf-handle pdf-wrapper))
