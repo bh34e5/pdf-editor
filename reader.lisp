@@ -663,18 +663,3 @@
                  (vector-push-extend ch bytes)
                  (read-kwd-rec (read-next) bytes)))))
     (read-kwd-rec first-char)))
-
-(defmacro comment (&rest forms)
-  (declare (ignore forms))
-  nil)
-
-(comment
-  (asdf:clear-system "pdf-editor")
-  (asdf:load-system "pdf-editor")
-  (defvar *test-pdf* (load-pdf #P"~/Downloads/tess_test.pdf"))
-  (pdf-header-version *test-pdf*)
-  (eq (char-code #\Space) (char-code #\Space))
-  (with-open-file (f #P"~/Downloads/sobel.pdf" :element-type '(unsigned-byte 8))
-    (read-version-specifier f))
-  (equalp #(1 2 3) #(1 2 3))
-  )
