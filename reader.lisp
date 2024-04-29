@@ -24,6 +24,10 @@
     (setf (slot-value pdf-wrapper '%trailer)
           (read-trailer pdf-wrapper))))
 
+(defmethod close-pdf ((pdf-wrapper pdf-wrapper))
+  (let ((file-handle (pdf-handle pdf-wrapper)))
+    (close file-handle)))
+
 (defmethod read-bytes ((pdf-wrapper pdf-wrapper)
                        &key
                        (num 1)

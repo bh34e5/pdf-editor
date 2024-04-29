@@ -12,6 +12,7 @@
   (:use :cl)
   (:local-nicknames (#:futils #:com.bhester.file-utils))
   (:export #:load-pdf
+           #:close-pdf
            #:page-count))
 
 (defpackage #:com.bhester.testing
