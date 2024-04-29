@@ -1,5 +1,10 @@
 (in-package #:com.bhester.reader)
 
+(defmacro with-pdf-wrapper (((file-handle line-ending) pdf-wrapper) &body body)
+  `(let ((,file-handle (pdf-handle ,pdf-wrapper))
+         (,line-ending (pdf-line-ending ,pdf-wrapper)))
+     . ,body))
+
 (defun load-pdf (filename)
   (let* ((file-handle (open filename
                             :direction :input
@@ -103,10 +108,9 @@
 (defmethod read-object-number ((pdf-wrapper pdf-wrapper) obj-num gen-num)
   (let ((ref-obj (get-object-reference pdf-wrapper obj-num gen-num)))
     (let ((byte-off (object-byte-offset ref-obj))
-          (file-handle (pdf-handle pdf-wrapper))
-          (line-ending (pdf-line-ending pdf-wrapper)))
+          (file-handle (pdf-handle pdf-wrapper)))
       (file-position file-handle byte-off)
-      (read-object file-handle line-ending))))
+      (read-object pdf-wrapper))))
 
 (defmethod page-count ((pdf-wrapper pdf-wrapper))
   (let* ((trailer (pdf-trailer pdf-wrapper))
@@ -185,7 +189,7 @@
         (error "Error Reading PDF. Could not find `startxref` keyword")
         (progn
           (scan-forward-line file-handle line-ending)
-          (let ((offset (read-object file-handle line-ending)))
+          (let ((offset (read-object pdf-wrapper)))
             (assert (eq (type-of offset) 'pdf-number))
             (if (<= (file-length file-handle) (numeric-value offset))
               (error "Invalid offset for cross-reference"))
@@ -198,15 +202,14 @@
     (read-trailer-from-kwd pdf-wrapper)))
 
 (defun read-trailer-from-kwd (pdf-wrapper)
-  (let ((file-handle (pdf-handle pdf-wrapper))
-        (line-ending (pdf-line-ending pdf-wrapper)))
-    (let ((kwd (read-object file-handle line-ending)))
+  (let ((file-handle (pdf-handle pdf-wrapper)))
+    (let ((kwd (read-object pdf-wrapper)))
       (if (not (eq kwd +kwd-xref+))
         (error "Invalid cross-reference section"))
       (let* ((xref-section (read-cross-reference-section pdf-wrapper))
-             (trailer-kwd (read-object file-handle line-ending)))
+             (trailer-kwd (read-object pdf-wrapper)))
         (assert (eq trailer-kwd +kwd-trailer+))
-        (let ((trailer-dict (read-object file-handle line-ending)))
+        (let ((trailer-dict (read-object pdf-wrapper)))
           (assert (typep trailer-dict 'pdf-dictionary))
           (let ((prev-offset-num (get-key trailer-dict +name-prev+)))
             (if (not (null prev-offset-num))
@@ -223,12 +226,9 @@
                              :dictionary trailer-dict))))))))
 
 (defmethod read-cross-reference-section ((pdf-wrapper pdf-wrapper))
-  (let ((file-handle (pdf-handle pdf-wrapper))
-        (line-ending (pdf-line-ending pdf-wrapper)))
+  (let ((file-handle (pdf-handle pdf-wrapper)))
     (labels ((read-next ()
-               (let ((subsection (read-cross-reference-subsection
-                                  file-handle
-                                  line-ending)))
+               (let ((subsection (read-cross-reference-subsection pdf-wrapper)))
                  (if (eq subsection +kwd-trailer+)
                    (progn
                      (file-position file-handle
@@ -238,26 +238,27 @@
                    (append subsection (read-next))))))
       (read-next))))
 
-(defun read-cross-reference-subsection (file-handle line-ending)
-  (let ((start-obj (read-object file-handle line-ending)))
-    (if (eq start-obj +kwd-trailer+)
-      start-obj
-      (let ((count-obj (read-object file-handle line-ending)))
-        (assert (and (typep start-obj 'pdf-number)
-                     (typep count-obj 'pdf-number)))
-        (let ((start-obj-num (numeric-value start-obj))
-              (count-obj-num (numeric-value count-obj)))
-          (labels ((read-entries (obj-num left &optional (entries nil))
-                     (if (zerop left)
-                       (nreverse entries)
-                       (let ((new (read-cross-reference-entry
-                                   file-handle
-                                   obj-num)))
-                         (read-entries (1+ obj-num)
-                                       (1- left)
-                                       (cons new entries))))))
-            (scan-forward-line file-handle line-ending)
-            (read-entries start-obj-num count-obj-num)))))))
+(defun read-cross-reference-subsection (pdf-wrapper)
+  (with-pdf-wrapper ((file-handle line-ending) pdf-wrapper)
+    (let ((start-obj (read-object pdf-wrapper)))
+      (if (eq start-obj +kwd-trailer+)
+        start-obj
+        (let ((count-obj (read-object pdf-wrapper)))
+          (assert (and (typep start-obj 'pdf-number)
+                       (typep count-obj 'pdf-number)))
+          (let ((start-obj-num (numeric-value start-obj))
+                (count-obj-num (numeric-value count-obj)))
+            (labels ((read-entries (obj-num left &optional (entries nil))
+                       (if (zerop left)
+                         (nreverse entries)
+                         (let ((new (read-cross-reference-entry
+                                     file-handle
+                                     obj-num)))
+                           (read-entries (1+ obj-num)
+                                         (1- left)
+                                         (cons new entries))))))
+              (scan-forward-line file-handle line-ending)
+              (read-entries start-obj-num count-obj-num))))))))
 
 (defun read-cross-reference-entry (file-handle obj-num)
   (let ((buf (make-array 20 :element-type '(unsigned-byte 8))))
@@ -327,7 +328,7 @@
                               (int-from-hex-char (first digs))))))))
     (rec hex-digs)))
 
-(define-condition invalid-object-condition (error)
+(define-condition invalid-object (error)
   ((offending-char :initarg :offending-char
                    :reader offending-char))
   (:report (lambda (condition stream)
@@ -335,30 +336,31 @@
                      "Could not read object because we encountered ~a.~&"
                      (offending-char condition)))))
 
-(defun read-object (file-handle line-ending)
-  (let ((ch (read-byte file-handle)))
-    (cond ((eq (char-code #\%) ch)
-           (futils:read-to-line-ending file-handle line-ending)
-           (read-object file-handle line-ending))
-          ((eq (char-code #\/) ch)
-           (read-name file-handle))
-          ((eq (char-code #\[) ch)
-           (read-array file-handle line-ending))
-          ((eq (char-code #\() ch)
-           (read-ascii-string file-handle line-ending))
-          ((eq (char-code #\<) ch)
-           (read-possible-dictionary file-handle line-ending))
-          ((or (eq ch (char-code #\.))
-               (eq ch (char-code #\+))
-               (eq ch (char-code #\-)))
-           (read-number file-handle ch))
-          ((whitespace-p ch)
-           ;; already incremented with the read, so just try again
-           (read-object file-handle line-ending))
-          ((digit-p ch)
-           (read-possible-object file-handle ch line-ending))
-          ((alpha-p ch) (read-keyword file-handle ch))
-          (t (error 'invalid-object-condition :offending-char ch)))))
+(defun read-object (pdf-wrapper)
+  (with-pdf-wrapper ((file-handle line-ending) pdf-wrapper)
+    (let ((ch (read-byte file-handle)))
+      (cond ((eq (char-code #\%) ch)
+             (futils:read-to-line-ending file-handle line-ending)
+             (read-object pdf-wrapper))
+            ((eq (char-code #\/) ch)
+             (read-name file-handle))
+            ((eq (char-code #\[) ch)
+             (read-array pdf-wrapper))
+            ((eq (char-code #\() ch)
+             (read-ascii-string file-handle line-ending))
+            ((eq (char-code #\<) ch)
+             (read-possible-dictionary pdf-wrapper))
+            ((or (eq ch (char-code #\.))
+                 (eq ch (char-code #\+))
+                 (eq ch (char-code #\-)))
+             (read-number file-handle ch))
+            ((whitespace-p ch)
+             ;; already incremented with the read, so just try again
+             (read-object pdf-wrapper))
+            ((digit-p ch)
+             (read-possible-object pdf-wrapper ch))
+            ((alpha-p ch) (read-keyword file-handle ch))
+            (t (error 'invalid-object :offending-char ch))))))
 
 (defun read-name (file-handle)
   (let ((bytes (make-array 1
@@ -388,21 +390,22 @@
       (make-instance 'pdf-name
                      :bytes (read-next)))))
 
-(defun read-array (file-handle line-ending)
-  (labels ((reset-and-read ()
-             (file-position file-handle
-                            (1- (file-position file-handle)))
-             (read-object file-handle line-ending))
-           (read-next (&optional (objs nil))
-             (let ((ch (read-byte file-handle)))
-               ;; TODO: need to check all the places that I'm expecting an
-               ;; ending delimeter and make sure that I take into account the
-               ;; possibility of whitespace
-               (cond ((whitespace-p ch) (read-next objs))
-                     ((eq (char-code #\]) ch) (nreverse objs))
-                     (t (read-next (cons (reset-and-read) objs)))))))
-    (make-instance 'pdf-array
-                   :objects (read-next))))
+(defun read-array (pdf-wrapper)
+  (let ((file-handle (pdf-handle pdf-wrapper)))
+    (labels ((reset-and-read ()
+               (file-position file-handle
+                              (1- (file-position file-handle)))
+               (read-object pdf-wrapper))
+             (read-next (&optional (objs nil))
+               (let ((ch (read-byte file-handle)))
+                 ;; TODO: need to check all the places that I'm expecting an
+                 ;; ending delimeter and make sure that I take into account the
+                 ;; possibility of whitespace
+                 (cond ((whitespace-p ch) (read-next objs))
+                       ((eq (char-code #\]) ch) (nreverse objs))
+                       (t (read-next (cons (reset-and-read) objs)))))))
+      (make-instance 'pdf-array
+                     :objects (read-next)))))
 
 (defun read-ascii-string (file-handle line-ending)
   (let ((bytes (make-array 8
@@ -463,75 +466,79 @@
     (make-instance 'pdf-string
                    :bytes (read-second-char first-char))))
 
-(defun read-possible-dictionary (file-handle line-ending)
-  (let ((first-char (read-byte file-handle)))
+(defun read-possible-dictionary (pdf-wrapper)
+  (let* ((file-handle (pdf-handle pdf-wrapper))
+         (first-char (read-byte file-handle)))
     (if (eq (char-code #\<) first-char)
-      (read-possible-stream file-handle line-ending)
+      (read-possible-stream pdf-wrapper)
       (read-hex-string file-handle first-char))))
 
-(defun read-possible-stream (file-handle line-ending)
-  (let* ((dict (read-dictionary file-handle line-ending))
+(defun read-possible-stream (pdf-wrapper)
+  (let* ((file-handle (pdf-handle pdf-wrapper))
+         (dict (read-dictionary pdf-wrapper))
          (reset-position (file-position file-handle)))
     (assert (typep dict 'pdf-dictionary))
     (labels ((reset-and-return ()
                (file-position file-handle reset-position)
                dict))
       (handler-case
-          (let ((next-obj (read-object file-handle line-ending)))
+          (let ((next-obj (read-object pdf-wrapper)))
             (if (not (eq next-obj +kwd-stream+))
               (reset-and-return)
               (make-instance 'pdf-stream
                              :dictionary dict
-                             :encoded-bytes (read-stream-bytes file-handle
-                                                               line-ending
+                             :encoded-bytes (read-stream-bytes pdf-wrapper
                                                                dict))))
-        (invalid-object-condition ()
+        (invalid-object ()
           (reset-and-return))
         (end-of-file ()
           (reset-and-return))))))
 
-(defun read-stream-bytes (file-handle line-ending stream-dictionary)
-  (let ((stm-length (get-key stream-dictionary +name-length+)))
-    ;; No support for reading streams with indirect lengths yet
-    (assert (typep stm-length 'pdf-number))
-    (let ((res-array (make-array (numeric-value stm-length)
-                                  :element-type '(unsigned-byte 8))))
-      ;; read the next line... the line ending must either be a single line feed
-      ;; or a carriage return followed by a line feed... no single carriage return
-      ;; is allowed
-      (cond ((eq line-ending :lf)
-             (file-position file-handle
-                            (1+ (file-position file-handle))))
-            (t
-             (file-position file-handle
-                            (+ 2 (file-position file-handle)))))
-      (read-sequence res-array file-handle)
-      res-array)))
+(defun read-stream-bytes (pdf-wrapper stream-dictionary)
+  (with-pdf-wrapper ((file-handle line-ending) pdf-wrapper)
+    (let ((stm-length (get-key stream-dictionary +name-length+)))
+      ;; No support for reading streams with indirect lengths yet
+      (assert (typep stm-length 'pdf-number))
+      (let ((res-array (make-array (numeric-value stm-length)
+                                    :element-type '(unsigned-byte 8))))
+        ;; read the next line... the line ending must either be a single line
+        ;; feed or a carriage return followed by a line feed... no single
+        ;; carriage return is allowed
+        (cond ((eq line-ending :lf)
+               (file-position file-handle
+                              (1+ (file-position file-handle))))
+              (t
+               (file-position file-handle
+                              (+ 2 (file-position file-handle)))))
+        (read-sequence res-array file-handle)
+        res-array))))
 
-(defun read-dictionary (file-handle line-ending)
-  (labels ((read-entry ()
-             (let ((name (read-name file-handle))
-                   (value (read-object file-handle line-ending)))
-               ;; TODO: return actual objects (maybe). Just until it works,
-               ;; using a-list (ordered in the same way the objects are read)
-               (cons name value)))
-           (finish-dict (entries)
-             (read-byte file-handle) ;; read the second #\>
-             (nreverse entries))
-           (read-entries (&optional (entries nil))
-             (let ((ch (read-byte file-handle)))
-               (cond ((eq (char-code #\>) ch)
-                      (finish-dict entries))
-                     ((whitespace-p ch)
-                      (read-entries entries))
-                     ((eq (char-code #\/) ch)
-                      (read-entries (cons (read-entry)
-                                          entries)))))))
-    (make-instance 'pdf-dictionary
-                   :pairs (read-entries))))
+(defun read-dictionary (pdf-wrapper)
+  (let ((file-handle (pdf-handle pdf-wrapper)))
+    (labels ((read-entry ()
+               (let ((name (read-name file-handle))
+                     (value (read-object pdf-wrapper)))
+                 ;; TODO: return actual objects (maybe). Just until it works,
+                 ;; using a-list (ordered in the same way the objects are read)
+                 (cons name value)))
+             (finish-dict (entries)
+               (read-byte file-handle) ;; read the second #\>
+               (nreverse entries))
+             (read-entries (&optional (entries nil))
+               (let ((ch (read-byte file-handle)))
+                 (cond ((eq (char-code #\>) ch)
+                        (finish-dict entries))
+                       ((whitespace-p ch)
+                        (read-entries entries))
+                       ((eq (char-code #\/) ch)
+                        (read-entries (cons (read-entry)
+                                            entries)))))))
+      (make-instance 'pdf-dictionary
+                     :pairs (read-entries)))))
 
-(defun read-possible-object (file-handle first-char line-ending)
-  (let* ((num (read-number file-handle first-char))
+(defun read-possible-object (pdf-wrapper first-char)
+  (let* ((file-handle (pdf-handle pdf-wrapper))
+         (num (read-number file-handle first-char))
          (reset-position (file-position file-handle)))
     (if (or (eq :real (num-type num))
             (< (numeric-value num) 0))
@@ -539,11 +546,11 @@
       num
       ;; integer result, could still be an object or reference
       (labels ((try-second-and-third ()
-                 (let ((next-obj (read-object file-handle line-ending)))
+                 (let ((next-obj (read-object pdf-wrapper)))
                    (if (and (typep next-obj 'pdf-number)
                             (eq :integer (num-type next-obj))
                             (>= (numeric-value next-obj) 0))
-                     (let ((third-obj (read-object file-handle line-ending)))
+                     (let ((third-obj (read-object pdf-wrapper)))
                        (if (and (typep third-obj 'pdf-keyword)
                                 (or (eq third-obj +kwd-obj+)
                                     (eq third-obj +kwd-r+)))
@@ -558,9 +565,7 @@
                              (make-instance 'indirect-obj
                                             :object-number obj-num
                                             :generation-number gen-num
-                                            :object (read-object
-                                                     file-handle
-                                                     line-ending))))
+                                            :object (read-object pdf-wrapper))))
                          ;; this wasn't an object / reference after all.
                          ;; return the number
                          (progn
@@ -573,7 +578,7 @@
                        num)))))
         (handler-case
             (try-second-and-third)
-          (invalid-object-condition ()
+          (invalid-object ()
             (file-position file-handle reset-position)
             num)
           (end-of-file ()
