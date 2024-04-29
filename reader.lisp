@@ -97,6 +97,15 @@
                   (= (object-generation-number el) gen-num)))
            xref-section))
 
+(defun ensure-direct-obj (pdf-wrapper possible-ref expected-type)
+  (if (typep possible-ref expected-type)
+    possible-ref
+    (progn
+      (assert (typep possible-ref 'indirect-obj-ref))
+      (let ((from-ref (read-object-from-ref pdf-wrapper possible-ref)))
+        (assert (typep from-ref expected-type))
+        from-ref))))
+
 (defmethod read-object-from-ref ((pdf-wrapper pdf-wrapper)
                                  (obj-ref indirect-obj-ref))
   (let ((obj-num (object-number obj-ref))
@@ -496,9 +505,10 @@
 
 (defun read-stream-bytes (pdf-wrapper stream-dictionary)
   (with-pdf-wrapper ((file-handle line-ending) pdf-wrapper)
-    (let ((stm-length (get-key stream-dictionary +name-length+)))
-      ;; No support for reading streams with indirect lengths yet
-      (assert (typep stm-length 'pdf-number))
+    (let* ((stm-length-obj (get-key stream-dictionary +name-length+))
+           (stm-length (ensure-direct-obj pdf-wrapper
+                                          stm-length-obj
+                                          'pdf-number)))
       (let ((res-array (make-array (numeric-value stm-length)
                                     :element-type '(unsigned-byte 8))))
         ;; read the next line... the line ending must either be a single line
