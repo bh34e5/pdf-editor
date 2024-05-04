@@ -310,6 +310,9 @@
 (defun digit-p (ch)
   (<= (char-code #\0) ch (char-code #\9)))
 
+(defun octal-p (ch)
+  (<= (char-code #\0) ch (char-code #\7)))
+
 (defun whitespace-p (ch)
   (member ch '(#x00  ;; NULL
                #x09  ;; Tab
@@ -426,7 +429,8 @@
                            :fill-pointer 0
                            :adjustable t)))
     (labels ((push-and-continue (ch depth)
-               (vector-push-extend ch bytes)
+               (when ch
+                 (vector-push-extend ch bytes))
                (read-next depth))
              (read-line-end (depth)
                (cond ((eq :crlf line-ending)
@@ -442,7 +446,7 @@
                       (push-and-continue futils:+feed-char+ depth))
                      ((eq :lf line-ending)
                       (push-and-continue futils:+return-char+ depth))))
-             (read-escape () (error "Unimplemented"))
+             (read-escape () (read-escape-sequence file-handle))
              (read-next (&optional (depth 0))
                (let ((ch (read-byte file-handle)))
                  (cond ((eq (char-code #\() ch)
@@ -458,8 +462,45 @@
                        (t (push-and-continue ch depth))))))
       (read-next))))
 
+(defun read-escape-sequence (file-handle)
+  (labels ((read-trailing-newline ()
+             (let ((ch (read-byte file-handle)))
+               (unless (eq futils:+feed-char+ ch)
+                 (file-position file-handle
+                                (1- (file-position file-handle))))
+               nil)))
+    (let ((ch (read-byte file-handle)))
+      (cond ((octal-p ch) (read-octal-escape file-handle ch))
+            ((eq (char-code #\n) futils:+feed-char+))
+            ((eq (char-code #\r) futils:+return-char+))
+            ((eq (char-code #\t) #\tab))
+            ((eq (char-code #\b) #\backspace))
+            ((eq (char-code #\f) #\page))
+            ((eq (char-code #\() #\())
+            ((eq (char-code #\)) #\)))
+            ((eq (char-code #\\) #\\))
+            ((eq ch futils:+return-char+)
+             (read-trailing-newline))
+            (t nil)))))
+
+(defun read-octal-escape (file-handle first-char)
+  (labels ((unread-and-return (res)
+             (file-position file-handle
+                            (1- (file-position file-handle)))
+             res)
+           (read-next (accum &optional (len 1))
+             (if (= len 3)
+               accum
+               (let ((ch (read-byte file-handle)))
+                 (if (not (octal-p ch))
+                   (unread-and-return accum)
+                   (read-next (+ (* 8 accum)
+                                 (code->int ch))
+                              (1+ len)))))))
+    (read-next (code->int first-char))))
+
 (defun read-hex-string (file-handle first-char)
-  (labels ((read-first-char (bytes)
+  (labels ((read-first-char (&optional (bytes nil))
              (let ((ch (read-byte file-handle)))
                (cond ((eq (char-code #\>) ch)
                       (nreverse bytes))
@@ -474,10 +515,10 @@
                      ((whitespace-p ch) (read-second-char first-char bytes))
                      (t (read-first-char (cons (char-from-hex first-char ch)
                                                bytes)))))))
-    ;; TODO: handle the case when the first passed character is a whitespace
-    ;; character
     (make-instance 'pdf-string
-                   :bytes (read-second-char first-char))))
+                   :bytes (if (whitespace-p first-char)
+                            (read-first-char)
+                            (read-second-char first-char)))))
 
 (defun read-possible-dictionary (pdf-wrapper)
   (let* ((file-handle (pdf-handle pdf-wrapper))
@@ -559,45 +600,47 @@
       ;; number with a decimal point or a negative number, must be a number
       num
       ;; integer result, could still be an object or reference
-      (labels ((try-second-and-third ()
+      (labels ((reset-and-return ()
+                 (file-position file-handle reset-position)
+                 num)
+               (read-indirect-object (obj-num gen-num)
+                 (let* ((obj-val (read-object pdf-wrapper))
+                        (end-kwd (read-object pdf-wrapper)))
+                   (assert (eq end-kwd +kwd-endobj+))
+                   (make-instance 'indirect-obj
+                                  :object-number obj-num
+                                  :generation-number gen-num
+                                  :object obj-val)))
+               (try-third (next-obj)
+                 (let ((third-obj (read-object pdf-wrapper)))
+                   (if (and (typep third-obj 'pdf-keyword)
+                            (or (eq third-obj +kwd-obj+)
+                                (eq third-obj +kwd-r+)))
+                     (let ((obj-num (numeric-value num))
+                           (gen-num (numeric-value next-obj)))
+                       (if (eq third-obj +kwd-r+)
+                         (make-instance 'indirect-obj-ref
+                                        :object-number obj-num
+                                        :generation-number gen-num)
+                         (read-indirect-object obj-num gen-num)))
+                     ;; this wasn't an object / reference after all.
+                     ;; return the number
+                     (reset-and-return))))
+               (try-second-and-third ()
                  (let ((next-obj (read-object pdf-wrapper)))
                    (if (and (typep next-obj 'pdf-number)
                             (eq :integer (num-type next-obj))
                             (>= (numeric-value next-obj) 0))
-                     (let ((third-obj (read-object pdf-wrapper)))
-                       (if (and (typep third-obj 'pdf-keyword)
-                                (or (eq third-obj +kwd-obj+)
-                                    (eq third-obj +kwd-r+)))
-                         (let ((obj-num (numeric-value num))
-                               (gen-num (numeric-value next-obj)))
-                           (if (eq third-obj +kwd-r+)
-                             (make-instance 'indirect-obj-ref
-                                            :object-number obj-num
-                                            :generation-number gen-num)
-                             ;; TODO: add the read of the `endobj` keyword to
-                             ;; ensure the reading is as expected
-                             (make-instance 'indirect-obj
-                                            :object-number obj-num
-                                            :generation-number gen-num
-                                            :object (read-object pdf-wrapper))))
-                         ;; this wasn't an object / reference after all.
-                         ;; return the number
-                         (progn
-                           (file-position file-handle reset-position)
-                           num)))
+                     (try-third next-obj)
                      ;; next-obj was not a positive integer, so this can't be a
                      ;; reference. return the original number
-                     (progn
-                       (file-position file-handle reset-position)
-                       num)))))
+                     (reset-and-return)))))
         (handler-case
             (try-second-and-third)
           (invalid-object ()
-            (file-position file-handle reset-position)
-            num)
+            (reset-and-return))
           (end-of-file ()
-            (file-position file-handle reset-position)
-            num))))))
+            (reset-and-return)))))))
 
 (defun code->int (ch)
   (assert (digit-p ch))
