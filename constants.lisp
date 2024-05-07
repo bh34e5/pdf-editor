@@ -31,20 +31,37 @@
 (define-bytes-const +header-beginning+ "%PDF-")
 (define-bytes-const +eof-sym+ "%%EOF")
 
-;; TODO: make this into a list of keyword byte arrays so that I can test for
-;; memebr equality instead of individual checks. And so I can only add in one
-;; place instead of two.
+(defmacro define-constants (name &rest constant-strings)
+  (let* ((bytes-names (mapcar (lambda (const-string)
+                                (intern (sym-name-from "+~a+" const-string)))
+                              constant-strings))
+         (kwd-names (mapcar (lambda (const-string)
+                              (intern (sym-name-from "+KWD-~a+" const-string)))
+                            constant-strings)))
+    `(progn
+       ,@(mapcar (lambda (const-string bytes-name kwd-name)
+                   `(progn
+                      (define-bytes-const ,bytes-name ,const-string)
+                      (define-keyword-constant ,kwd-name ,bytes-name)))
+                 constant-strings
+                 bytes-names
+                 kwd-names)
+       (alexandria:define-constant
+        ,name
+        (list ,@bytes-names)
+        :test #'equalp))))
 
-(define-keyword "startxref")
-(define-keyword "trailer")
-(define-keyword "xref")
-(define-keyword "obj")
-(define-keyword "endobj")
-(define-keyword "stream")
-(define-keyword "endstream")
-(define-keyword "R")
-(define-keyword "f")
-(define-keyword "n")
+(define-constants +all-keyword-bytes+
+  "startxref"
+  "trailer"
+  "xref"
+  "obj"
+  "endobj"
+  "stream"
+  "endstream"
+  "R"
+  "f"
+  "n")
 
 ;;; TODO: make these into actual null/boolean objects...
 ;;; NOTE: they are also not being checked in the `read-keyword` function, so I

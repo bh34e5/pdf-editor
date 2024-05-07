@@ -683,16 +683,9 @@
              (read-byte file-handle))
            (kwd-from (bytes)
              (cond
-               ((equalp bytes +startxref+) +kwd-startxref+)
-               ((equalp bytes +trailer+) +kwd-trailer+)
-               ((equalp bytes +xref+) +kwd-xref+)
-               ((equalp bytes +obj+) +kwd-obj+)
-               ((equalp bytes +endobj+) +kwd-endobj+)
-               ((equalp bytes +stream+) +kwd-stream+)
-               ((equalp bytes +endstream+) +kwd-endstream+)
-               ((equalp bytes +r+) +kwd-r+)
-               ((equalp bytes +f+) +kwd-f+)
-               ((equalp bytes +n+) +kwd-n+)
+               ((find-if (lambda (kb)
+                           (equalp kb bytes))
+                         +all-keyword-bytes+))
                (t (error "Unrecognized keyword"))))
            (read-kwd-rec (ch
                           &optional
