@@ -2,11 +2,6 @@
   :description "A simple PDF editor"
   :version "0.0.1"
   :license "MIT" ; does this need more?
-  :depends-on ("alexandria" "chipz")
+  :depends-on ("alexandria")
   :serial t
-  :components ((:file "packages")
-               (:file "file-utils")
-               (:file "objects")
-               (:file "constants")
-               (:file "reader")
-               (:file "testing")))
+  :components ((:file "packages")))
