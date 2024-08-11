@@ -4,4 +4,7 @@
   :license "MIT" ; does this need more?
   :depends-on ("alexandria")
   :serial t
-  :components ((:file "packages")))
+  :components ((:file "packages")
+               (:file "utils")
+               (:file "reader")
+               (:file "objects")))
