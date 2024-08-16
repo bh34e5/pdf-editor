@@ -14,14 +14,6 @@
       (validate-seq (rest seq) file (1+ start))
       (values nil nil))))
 
-(defun str->seq (str)
-  (labels ((inner (str-len &optional (ind 0))
-             (if (<= str-len ind)
-               nil
-               (cons (char-code (elt str ind))
-                     (inner str-len (1+ ind))))))
-    (inner (length str))))
-
 (utils:my-defconstant +digits+ (str->seq "0123456789"))
 (defun digit-p (d)
   (member d +digits+))

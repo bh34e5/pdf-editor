@@ -43,17 +43,17 @@
               (%make-inner-obj obj-type args)))
 
 (defun %make-inner-obj (obj-type args-list)
-  (case obj-type
-    (('bool) (apply #'%make-bool args-list))
-    (('number) (apply #'%make-number args-list))
-    (('string) (apply #'%make-string args-list))
-    (('name) (apply #'%make-name args-list))
-    (('array) (apply #'%make-array args-list))
-    (('dictionary) (apply #'%make-dictionary args-list))
-    (('stream) (apply #'%make-stream args-list))
-    (('null) (%make-null))
-    (('indirect) (apply #'%make-indirect args-list))
-    (('reference) (apply #'%make-reference args-list))))
+  (utils:condcase obj-type
+    ('bool (apply #'%make-bool args-list))
+    ('number (apply #'%make-number args-list))
+    ('string (apply #'%make-string args-list))
+    ('name (apply #'%make-name args-list))
+    ('array (apply #'%make-array args-list))
+    ('dictionary (apply #'%make-dictionary args-list))
+    ('stream (apply #'%make-stream args-list))
+    ('null (%make-null))
+    ('indirect (apply #'%make-indirect args-list))
+    ('reference (apply #'%make-reference args-list))))
 
 (defun object-type (obj)
   (unless (%object-p obj)
@@ -99,9 +99,9 @@
   (unless (member number-type +pdf-number-types+)
     (error "Invalid number type"))
   (%tag-value 'number
-              (case number-type
-                (('integer) (%make-int value))
-                (('real) (%make-real value)))))
+              (utils:condcase number-type
+                ('integer (%make-int value))
+                ('real (%make-real value)))))
 
 (defun %number-p (value)
   (and (%object-p value)

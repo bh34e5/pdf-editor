@@ -1,6 +1,8 @@
 (defpackage #:com.bhester.utils
   (:use :cl)
-  (:export #:my-defconstant))
+  (:export #:my-defconstant
+           #:condcase
+           #:str->seq))
 
 (defpackage #:com.bhester.objects
   (:use :cl)
@@ -10,7 +12,8 @@
 (defpackage #:com.bhester.reader
   (:use :cl)
   (:local-nicknames (#:objs #:com.bhester.objects)
-                    (#:utils #:com.bhester.utils)))
+                    (#:utils #:com.bhester.utils))
+  (:import-from #:com.bhester.utils #:str->seq))
 
 (defpackage #:com.bhester.pdf-editor
   (:use :cl)
