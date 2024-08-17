@@ -6,12 +6,12 @@
   (file-position file ind)
   (read-byte file))
 
-(defun validate-seq (seq file &optional (start 0))
+(defun valid-seq-p (seq file &optional (start 0))
   (if (null seq)
     (values t start)
     (if (eq (car seq)
             (char-at start file))
-      (validate-seq (rest seq) file (1+ start))
+      (valid-seq-p (rest seq) file (1+ start))
       (values nil nil))))
 
 (utils:my-defconstant +digits+ (str->seq "0123456789"))
@@ -34,11 +34,22 @@
 (defun whitespace-p (c)
   (member c +whitespace+))
 
-(defun read-number (file start-ind &key (force-integer nil)
-                                        (force-real nil))
+(defun read-number (file
+                    start-ind
+                    &key
+                    (force-integer nil)
+                    (force-real nil)
+                    (skip-whitespace nil)
+                    (err-p t))
   (when (and force-integer force-real)
     (error "Cannot provide both :force-integer and :force-real"))
-  (labels ((correct-sign (sign num)
+  (when skip-whitespace
+    (setf start-ind (skip-whitespace start-ind file)))
+  (labels ((this-err (&rest args)
+             (if err-p
+               (apply #'error args)
+               (return-from read-number (values 'error nil))))
+           (correct-sign (sign num)
              (if (eq (char-code #\-) sign)
                (- num)
                num))
@@ -51,11 +62,11 @@
            (final-check (num sign found-decimal found-digit pow)
              (cond
                ((not found-digit)
-                (error "No digit found in number"))
+                (this-err "No digit found in number"))
                ((and force-integer found-decimal)
-                (error "Found decimal in integer"))
+                (this-err "Found decimal in integer"))
                ((and force-real (not found-decimal))
-                (error "No decimal in real number")))
+                (this-err "No decimal in real number")))
              (correct-sign sign
                            (correct-pow found-decimal pow num)))
            (add-char (ind cur-num sign found-decimal found-digit pow)
@@ -73,7 +84,7 @@
                               pow)))
                  ((eq (char-code #\.) c)
                   (if found-decimal
-                    (error "Multiple decimal points found in number")
+                    (this-err "Multiple decimal points found in number")
                     (add-char (1+ ind)
                               cur-num
                               sign
@@ -82,7 +93,7 @@
                               pow)))
                  ((sign-p c)
                   (if found-digit
-                    (error "Sign in the middle of a number")
+                    (this-err "Sign in the middle of a number")
                     (add-char (1+ ind)
                               cur-num
                               c
@@ -106,7 +117,7 @@
 (utils:my-defconstant +lf-code+ (char-code #\linefeed))
 (utils:my-defconstant +cr-code+ (char-code #\return))
 
-(defun find-line-start (file from-ind)
+(defun line-start (file from-ind)
   (labels ((check-crlf ()
              (let ((c (char-at (- from-ind 2) file)))
                (values from-ind
@@ -117,7 +128,7 @@
       (utils:condcase c
         (+lf-code+ (check-crlf))
         (+cr-code+ (values from-ind 'cr))
-        (t (find-line-start file (1- from-ind)))))))
+        (t (line-start file (1- from-ind)))))))
 
 (defun read-to (target file from-ind &optional (end-ind nil end-ind-p))
   (let ((test-end (if end-ind-p end-ind (file-length file))))
@@ -132,49 +143,86 @@
   (- line-start
      (if (eq line-ending 'crlf) 2 1)))
 
-(defun find-prev-line-start (file line-start line-ending)
-  (find-line-start file
-                   (back-by-ending line-start line-ending)))
+(defun prev-line-start (file line-start line-ending)
+  (line-start file
+              (back-by-ending line-start line-ending)))
 
 ;; reader
 
 (defun read-header (file)
   (multiple-value-bind (valid version-start)
-      (validate-seq (str->seq "%PDF-") file 0)
+      (valid-seq-p (str->seq "%PDF-") file 0)
     (unless valid
       (error "Invalid pdf header"))
     (read-number file version-start :force-real t)))
 
 (defun find-xref (file)
   (let ((len (file-length file)))
-    (labels ((find-eof-marker (last-stop)
-               (multiple-value-bind (line-start line-ending)
-                   (find-line-start file last-stop)
-                 (multiple-value-bind (ind found-p)
-                     (read-to (char-code #\%) file line-start last-stop)
-                   (if (and found-p
-                            (validate-seq (str->seq "%%EOF") file ind))
-                     (cons line-start line-ending)
-                     (find-eof-marker (back-by-ending line-start
-                                                      line-ending))))))
-             (get-xref-byte-off (startxref-start)
-               (if (validate-seq (str->seq "startxref") file startxref-start)
-                 (let ((num-start (skip-whitespace (+ 9 ; length of startxref
-                                                      startxref-start)
-                                                   file)))
-                   (read-number file
-                                num-start
-                                :force-integer t))
-                 (error "Invalid trailer. Could not find \"startxref\""))))
-      (let ((eof-marker (find-eof-marker len)))
-        (multiple-value-bind (xref-off xref-ending)
-            (find-prev-line-start file (car eof-marker) (cdr eof-marker))
-          (let* ((startxref-start (skip-whitespace
-                                   (find-prev-line-start file
-                                                         xref-off
-                                                         xref-ending)
-                                   file))
-                 (xref-byte-off (get-xref-byte-off startxref-start)))
-            (format t "The byte offset is... ~A~%" xref-byte-off)
-            'find-the-xref-section
-            'then-maybe-the-trailer-after-that?))))))
+    (let ((eof-marker (last-eof-marker file len)))
+      (multiple-value-bind (xref-off xref-ending)
+          (prev-line-start file (car eof-marker) (cdr eof-marker))
+        (let* ((line-before (prev-line-start file xref-off xref-ending))
+               (startxref-start (skip-whitespace line-before file))
+               (xref-byte-off (get-xref-byte-off file startxref-start))
+               (xref-entries (read-xref-entries xref-byte-off file)))
+          (format t "The byte offset is... ~A~%" xref-byte-off)
+          'find-the-xref-section
+          'then-maybe-the-trailer-after-that?
+          xref-entries)))))
+
+(defun last-eof-marker (file last-stop)
+  (multiple-value-bind (line-start line-ending)
+      (line-start file last-stop)
+    (multiple-value-bind (ind found-p)
+        (read-to (char-code #\%) file line-start last-stop)
+      (if (and found-p
+               (valid-seq-p (str->seq "%%EOF") file ind))
+        (cons line-start line-ending)
+        (last-eof-marker file
+                         (back-by-ending line-start line-ending))))))
+
+(defun get-xref-byte-off (file startxref-start)
+  (if (valid-seq-p (str->seq "startxref")
+                   file
+                   startxref-start)
+    (let ((byte-off (read-number file
+                                 (+ 9 startxref-start)
+                                 :force-integer t
+                                 :skip-whitespace t)))
+      (unless (valid-seq-p (str->seq "xref") file byte-off)
+        (error "Invalid xref byte offset. Could not find \"xref\""))
+      byte-off)
+    (error "Invalid trailer. Could not find \"startxref\"")))
+
+(defun read-xref-entries (xref-byte-off file)
+  (let ((subsection-start (skip-whitespace (+ 4 xref-byte-off)
+                                           file)))
+    (apply #'append (try-xref-subsections subsection-start file))))
+
+(defun try-xref-subsections (subsection-start file)
+  (multiple-value-bind (maybe-start-obj-num ind)
+      (read-number file subsection-start :force-integer t :err-p nil)
+    (format t "~A~%" maybe-start-obj-num)
+    (if (eq maybe-start-obj-num 'error)
+      '()
+      (multiple-value-bind (entry-count after-ec)
+          (read-number file ind :force-integer t :skip-whitespace t)
+        (let* ((entry-start (skip-whitespace after-ec file))
+               (next-start (+ entry-start
+                              (* 20 entry-count))))
+          (cons (xref-subsection-entries entry-start entry-count file)
+                (try-xref-subsections next-start file)))))))
+
+(defun xref-subsection-entries (entry-start entry-count file)
+  (if (zerop entry-count)
+    '()
+    (cons (xref-subsection-entry entry-start file)
+          (xref-subsection-entries (+ 20 entry-start)
+                                   (1- entry-count)
+                                   file))))
+
+(defun xref-subsection-entry (entry-start file)
+  (let ((n1 (read-number file entry-start :force-integer t))
+        (n2 (read-number file (+ 11 entry-start) :force-integer t))
+        (c (code-char (char-at (+ 17 entry-start) file))))
+    (list n1 n2 c)))
