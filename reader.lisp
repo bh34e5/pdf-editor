@@ -158,19 +158,19 @@
 
 (defun find-xref (file)
   (let ((len (file-length file)))
-    (let ((eof-marker (last-eof-marker file len)))
+    (let ((eof-marker (last-eof-marker len file)))
       (multiple-value-bind (xref-off xref-ending)
           (prev-line-start file (car eof-marker) (cdr eof-marker))
         (let* ((line-before (prev-line-start file xref-off xref-ending))
                (startxref-start (skip-whitespace line-before file))
-               (xref-byte-off (get-xref-byte-off file startxref-start))
+               (xref-byte-off (get-xref-byte-off startxref-start file))
                (xref-entries (read-xref-entries xref-byte-off file)))
           (format t "The byte offset is... ~A~%" xref-byte-off)
           'find-the-xref-section
           'then-maybe-the-trailer-after-that?
           xref-entries)))))
 
-(defun last-eof-marker (file last-stop)
+(defun last-eof-marker (last-stop file)
   (multiple-value-bind (line-start line-ending)
       (line-start file last-stop)
     (multiple-value-bind (ind found-p)
@@ -178,10 +178,10 @@
       (if (and found-p
                (valid-seq-p (str->seq "%%EOF") file ind))
         (cons line-start line-ending)
-        (last-eof-marker file
-                         (back-by-ending line-start line-ending))))))
+        (last-eof-marker (back-by-ending line-start line-ending)
+                         file)))))
 
-(defun get-xref-byte-off (file startxref-start)
+(defun get-xref-byte-off (startxref-start file)
   (if (valid-seq-p (str->seq "startxref")
                    file
                    startxref-start)
@@ -210,19 +210,32 @@
         (let* ((entry-start (skip-whitespace after-ec file))
                (next-start (+ entry-start
                               (* 20 entry-count))))
-          (cons (xref-subsection-entries entry-start entry-count file)
+          (cons (xref-subsection-entries entry-start
+                                         maybe-start-obj-num
+                                         entry-count
+                                         file)
                 (try-xref-subsections next-start file)))))))
 
-(defun xref-subsection-entries (entry-start entry-count file)
+(defun xref-subsection-entries (entry-start object-num entry-count file)
   (if (zerop entry-count)
     '()
-    (cons (xref-subsection-entry entry-start file)
+    (cons (xref-subsection-entry object-num entry-start file)
           (xref-subsection-entries (+ 20 entry-start)
+                                   (1+ object-num)
                                    (1- entry-count)
                                    file))))
 
-(defun xref-subsection-entry (entry-start file)
+(defun xref-subsection-entry (object-num entry-start file)
   (let ((n1 (read-number file entry-start :force-integer t))
         (n2 (read-number file (+ 11 entry-start) :force-integer t))
         (c (code-char (char-at (+ 17 entry-start) file))))
-    (list n1 n2 c)))
+    (utils:condcase c
+      (#\n (make-n-xref-entry object-num n2 n1))
+      (#\f (make-f-xref-entry object-num n2))
+      (t (error "Invalid xref entry type")))))
+
+(defun make-n-xref-entry (object-num generation-num offset)
+  (utils:tag-value 'n-xref-entry (list object-num generation-num offset)))
+
+(defun make-f-xref-entry (object-num generation-num)
+  (utils:tag-value 'f-xref-entry (list object-num generation-num)))

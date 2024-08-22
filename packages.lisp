@@ -2,7 +2,12 @@
   (:use :cl)
   (:export #:my-defconstant
            #:condcase
-           #:str->seq))
+           #:str->seq
+           #:tag-value
+           #:get-tag
+           #:get-tagged
+           #:tagged-p
+           #:has-tag))
 
 (defpackage #:com.bhester.objects
   (:use :cl)

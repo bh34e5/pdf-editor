@@ -35,3 +35,19 @@
                (cons (char-code (elt str ind))
                      (inner str-len (1+ ind))))))
     (inner (length str))))
+
+(defun tag-value (tag value)
+  (cons tag value))
+
+(defun get-tag (value)
+  (car value))
+
+(defun get-tagged (value)
+  (cdr value))
+
+(defun tagged-p (value)
+  (consp value))
+
+(defun has-tag (tag value)
+  (and (tagged-p value)
+       (eq (get-tag value) tag)))

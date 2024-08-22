@@ -4,24 +4,6 @@
 ;; contain certain characters, or that the stream dictionary must contain at
 ;; least the Key "Length", etc.
 
-;; helpers
-
-(defun tag-value (tag value)
-  (cons tag value))
-
-(defun get-tag (value)
-  (car value))
-
-(defun get-tagged (value)
-  (cdr value))
-
-(defun tagged-p (value)
-  (consp value))
-
-(defun has-tag (tag value)
-  (and (tagged-p value)
-       (eq (get-tag value) tag)))
-
 ;; objects
 
 (utils:my-defconstant +pdf-object-types+ (list 'bool
@@ -39,8 +21,8 @@
 (defun make-pdf-object (obj-type &rest args)
   (unless (member obj-type +pdf-object-types+)
     (error "Invalid object type"))
-  (tag-value 'pdf-obj
-              (make-inner-obj obj-type args)))
+  (utils:tag-value 'pdf-obj
+                    (make-inner-obj obj-type args)))
 
 (defun make-inner-obj (obj-type args-list)
   (utils:condcase obj-type
@@ -71,15 +53,15 @@
     ((reference-p obj) 'reference)))
 
 (defun object-p (value)
-  (has-tag 'pdf-obj value))
+  (utils:has-tag 'pdf-obj value))
 
 (defun object-value (value)
-  (get-tagged value))
+  (utils:get-tagged value))
 
 ;; booleans
 
-(let ((pdf-t (tag-value 'bool t))
-      (pdf-f (tag-value 'bool nil)))
+(let ((pdf-t (utils:tag-value 'bool t))
+      (pdf-f (utils:tag-value 'bool nil)))
   (defun make-pdf-bool (truthy)
     (if truthy pdf-t pdf-f))
 
@@ -98,44 +80,44 @@
 (defun make-pdf-number (number-type value)
   (unless (member number-type +pdf-number-types+)
     (error "Invalid number type"))
-  (tag-value 'number
-              (utils:condcase number-type
-                ('integer (make-int value))
-                ('real (make-real value)))))
+  (utils:tag-value 'number
+                    (utils:condcase number-type
+                      ('integer (make-int value))
+                      ('real (make-real value)))))
 
 (defun number-p (value)
   (and (object-p value)
-       (has-tag 'number (object-value value))))
+       (utils:has-tag 'number (object-value value))))
 
 (defun make-int (value)
   (unless (integerp value)
     (error "Value is not an integer"))
-  (tag-value 'integer value))
+  (utils:tag-value 'integer value))
 
 (defun make-real (value)
   (unless (realp value)
     (error "Value is not a real number"))
-  (tag-value 'real value))
+  (utils:tag-value 'real value))
 
 ;; strings
 
 (defun make-pdf-string (contents)
-  (tag-value 'string contents))
+  (utils:tag-value 'string contents))
 
 (defun string-p (value)
   (and (object-p value)
-       (has-tag 'string (object-value value))))
+       (utils:has-tag 'string (object-value value))))
 
 ;; names
 
 (defun make-pdf-name (contents)
   ;; TODO: should I be passed a symbol here? do I want to check this is a
   ;; symbol? I think names are unique/singletons like symbols...
-  (tag-value 'name contents))
+  (utils:tag-value 'name contents))
 
 (defun name-p (value)
   (and (object-p value)
-       (has-tag 'name (object-value value))))
+       (utils:has-tag 'name (object-value value))))
 
 ;; arrays
 
@@ -145,12 +127,12 @@
                  (and (object-p (car contents))
                       (valid-p (rest contents))))))
     (if (valid-p contents)
-      (tag-value 'array contents)
+      (utils:tag-value 'array contents)
       (error "Not all values are pdf objects"))))
 
 (defun array-p (value)
   (and (object-p value)
-       (has-tag 'array (object-value value))))
+       (utils:has-tag 'array (object-value value))))
 
 ;; dictionaries
 
@@ -167,27 +149,27 @@
                         (object-p (cadr f))
                         (valid-p (rest pairs)))))))
     (if (valid-p pairs)
-      (tag-value 'dictionary pairs)
+      (utils:tag-value 'dictionary pairs)
       (error "Not all pairs are valid"))))
 
 (defun dictionary-p (value)
   (and (object-p value)
-       (has-tag 'dictionary (object-value value))))
+       (utils:has-tag 'dictionary (object-value value))))
 
 ;; streams
 
 (defun make-pdf-stream (dictionary contents)
   (unless (dictionary-p dictionary)
     (error "Dictionary is not valid"))
-  (tag-value 'stream (list dictionary contents)))
+  (utils:tag-value 'stream (list dictionary contents)))
 
 (defun stream-p (value)
   (and (object-p value)
-       (has-tag 'stream (object-value value))))
+       (utils:has-tag 'stream (object-value value))))
 
 ;; null object
 
-(let ((pdf-null (tag-value 'null nil)))
+(let ((pdf-null (utils:tag-value 'null nil)))
   (defun make-pdf-null ()
     pdf-null)
 
@@ -199,17 +181,17 @@
 (defun make-pdf-indirect (object-num generation-num object)
   (unless (object-p object)
     (error "Indirect object value is not a valid object"))
-  (tag-value 'indirect (list object-num generation-num object)))
+  (utils:tag-value 'indirect (list object-num generation-num object)))
 
 (defun indirect-p (value)
   (and (object-p value)
-       (has-tag 'indirect (object-value value))))
+       (utils:has-tag 'indirect (object-value value))))
 
 ;; references
 
 (defun make-pdf-reference (object-num generation-num)
-  (tag-value 'reference (list object-num generation-num)))
+  (utils:tag-value 'reference (list object-num generation-num)))
 
 (defun reference-p (value)
   (and (object-p value)
-       (has-tag 'reference (object-value value))))
+       (utils:has-tag 'reference (object-value value))))
