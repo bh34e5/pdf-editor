@@ -156,7 +156,7 @@
 (utils:my-defconstant +lf-code+ (char-code #\linefeed))
 (utils:my-defconstant +cr-code+ (char-code #\return))
 
-(defun line-start (file from-ind)
+(defun line-start (from-ind file)
   (labels ((check-crlf ()
              (let ((c (char-at (- from-ind 2) file)))
                (values from-ind
@@ -167,7 +167,7 @@
       (utils:condcase c
         (+lf-code+ (check-crlf))
         (+cr-code+ (values from-ind 'cr))
-        (t (line-start file (1- from-ind)))))))
+        (t (line-start (1- from-ind) file))))))
 
 (defun read-to (target file from-ind &optional (end-ind nil end-ind-p))
   (let ((test-end (if end-ind-p end-ind (file-length file))))
@@ -182,9 +182,9 @@
   (- line-start
      (if (eq line-ending 'crlf) 2 1)))
 
-(defun prev-line-start (file line-start line-ending)
-  (line-start file
-              (back-by-ending line-start line-ending)))
+(defun prev-line-start (line-start line-ending file)
+  (line-start (back-by-ending line-start line-ending)
+              file))
 
 ;; reader
 
@@ -196,22 +196,21 @@
     (read-number file version-start :force-real t)))
 
 (defun find-xref (file)
-  (let ((len (file-length file)))
-    (let ((eof-marker (last-eof-marker len file)))
-      (multiple-value-bind (xref-off xref-ending)
-          (prev-line-start file (car eof-marker) (cdr eof-marker))
-        (let* ((line-before (prev-line-start file xref-off xref-ending))
-               (startxref-start (skip-whitespace line-before file))
-               (xref-byte-off (get-xref-byte-off startxref-start file))
-               (xref-entries (read-xref-entries xref-byte-off file)))
-          (format t "The byte offset is... ~A~%" xref-byte-off)
-          'find-the-xref-section
-          'then-maybe-the-trailer-after-that?
-          xref-entries)))))
+  (utils:letmv* ((len (file-length file))
+                 (eof-marker (last-eof-marker len file))
+                 ((xref-off xref-ending)
+                  (prev-line-start (car eof-marker) (cdr eof-marker) file))
+                 (xref-entries
+                  (utils:-> (prev-line-start xref-off xref-ending file)
+                            (skip-whitespace file)
+                            (get-xref-byte-off file)
+                            (read-xref-entries file))))
+    'then-maybe-the-trailer-after-that?
+    xref-entries))
 
 (defun last-eof-marker (last-stop file)
   (multiple-value-bind (line-start line-ending)
-      (line-start file last-stop)
+      (line-start last-stop file)
     (multiple-value-bind (ind found-p)
         (read-to (char-code #\%) file line-start last-stop)
       (if (and found-p

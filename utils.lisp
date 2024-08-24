@@ -51,3 +51,30 @@
 (defun has-tag (tag value)
   (and (tagged-p value)
        (eq (get-tag value) tag)))
+
+(defun length-1 (l)
+  (and (consp l)
+       (null (cdr l))))
+
+(defmacro -> (&rest forms)
+  (let ((rforms (reverse forms)))
+    (%-> rforms)))
+
+(defun %-> (rforms)
+  (if (length-1 rforms)
+    (car rforms)
+    (list* (caar rforms) (%-> (cdr rforms)) (cdar rforms))))
+
+(defmacro letmv* ((&rest bindings) &body forms)
+  (%letmv* bindings forms))
+
+(defun %letmv* (bindings forms)
+  (cond
+    ((null bindings) `(progn ,@forms))
+    ((consp (caar bindings))
+     `(multiple-value-bind ,(caar bindings)
+          ,(cadar bindings)
+        ,(%letmv* (cdr bindings) forms)))
+    (t
+     `(let (,(car bindings))
+        ,(%letmv* (cdr bindings) forms)))))
