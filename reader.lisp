@@ -43,70 +43,109 @@
                     (err-p t))
   (when (and force-integer force-real)
     (error "Cannot provide both :force-integer and :force-real"))
-  (when skip-whitespace
-    (setf start-ind (skip-whitespace start-ind file)))
-  (labels ((this-err (&rest args)
+  (%read-number file
+                (if skip-whitespace
+                  (skip-whitespace start-ind file)
+                  start-ind)
+                force-integer
+                force-real
+                err-p))
+
+(defun %read-number (file start-ind force-integer force-real err-p)
+  (funcall (add-char file force-integer force-real)
+           start-ind
+           0
+           nil
+           nil
+           nil
+           0
+           (lambda (&rest args)
              (if err-p
                (apply #'error args)
-               (return-from read-number (values 'error nil))))
-           (correct-sign (sign num)
-             (if (eq (char-code #\-) sign)
-               (- num)
-               num))
-           (correct-pow (found-decimal pow num)
-             (if force-real
-               (float (if found-decimal
-                        (* num (expt 10 pow))
-                        num))
-               num))
-           (final-check (num sign found-decimal found-digit pow)
-             (cond
-               ((not found-digit)
-                (this-err "No digit found in number"))
-               ((and force-integer found-decimal)
-                (this-err "Found decimal in integer"))
-               ((and force-real (not found-decimal))
-                (this-err "No decimal in real number")))
-             (correct-sign sign
-                           (correct-pow found-decimal pow num)))
-           (add-char (ind cur-num sign found-decimal found-digit pow)
-             (let ((c (char-at ind file)))
-               (cond
-                 ((digit-p c)
-                  (add-char (1+ ind)
-                            (+ (* 10 cur-num)
-                               (digit-value c))
-                            sign
-                            found-decimal
-                            t
-                            (if found-decimal
-                              (1- pow)
-                              pow)))
-                 ((eq (char-code #\.) c)
-                  (if found-decimal
-                    (this-err "Multiple decimal points found in number")
-                    (add-char (1+ ind)
-                              cur-num
-                              sign
-                              t
-                              found-digit
-                              pow)))
-                 ((sign-p c)
-                  (if found-digit
-                    (this-err "Sign in the middle of a number")
-                    (add-char (1+ ind)
-                              cur-num
-                              c
-                              found-decimal
-                              found-digit
-                              pow)))
-                 (t (values (final-check cur-num
-                                         sign
-                                         found-decimal
-                                         found-digit
-                                         pow)
-                            ind))))))
-    (add-char start-ind 0 nil nil nil 0)))
+               (values 'error nil)))
+           (lambda (num ind)
+             (values num ind))))
+
+(defun add-char (file force-integer force-real)
+  (lambda (ind num sign found-decimal found-digit pow fail success)
+    (labels ((inner (ind num sign found-decimal found-digit pow)
+               (let ((c (char-at ind file)))
+                 (cond
+                   ((digit-p c)
+                    (inner (1+ ind)
+                           (+ (* 10 num)
+                              (digit-value c))
+                           sign
+                           found-decimal
+                           t
+                           (if found-decimal
+                             (1- pow)
+                             pow)))
+                   ((eq (char-code #\.) c)
+                    (if found-decimal
+                      (funcall fail "Multiple decimal points found in number")
+                      (inner (1+ ind)
+                             num
+                             sign
+                             t
+                             found-digit
+                             pow)))
+                   ((sign-p c)
+                    (if found-digit
+                      (funcall fail "Sign in the middle of a number")
+                      (inner (1+ ind)
+                             num
+                             c
+                             found-decimal
+                             found-digit
+                             pow)))
+                   (t
+                    (funcall (check-num-type force-integer force-real)
+                             ind
+                             num
+                             sign
+                             found-decimal
+                             found-digit
+                             pow
+                             fail
+                             success))))))
+      (inner ind num sign found-decimal found-digit pow))))
+
+(defun check-num-type (force-integer force-real)
+  (lambda (ind num sign found-decimal found-digit pow fail success)
+    (cond
+      ((not found-digit)
+       (funcall fail "No digit found in number"))
+      ((and force-integer found-decimal)
+       (funcall fail "Found decimal in integer"))
+      ((and force-real (not found-decimal))
+       (funcall fail "No decimal in real number"))
+      (t
+       (funcall (correct-pow force-real)
+                ind
+                num
+                sign
+                found-decimal
+                pow
+                success)))))
+
+(defun correct-pow (force-real)
+  (lambda (ind num sign found-decimal pow success)
+    (correct-sign ind
+                  (if force-real
+                    (float (if found-decimal
+                             (* num (expt 10 pow))
+                             num))
+                    num)
+                  sign
+                  success)))
+
+(defun correct-sign (ind num sign success)
+  (funcall success
+           (if (eq (char-code #\-) sign)
+             (- num)
+             num)
+           ind))
 
 (defun skip-whitespace (cur-pos file)
   (let ((c (char-at cur-pos file)))
