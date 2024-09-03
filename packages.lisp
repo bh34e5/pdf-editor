@@ -9,7 +9,8 @@
            #:tagged-p
            #:has-tag
            #:->
-           #:letmv*))
+           #:letmv*
+           #:letmv))
 
 (defpackage #:com.bhester.objects
   (:use :cl)

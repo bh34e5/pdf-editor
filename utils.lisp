@@ -78,3 +78,31 @@
     (t
      `(let (,(car bindings))
         ,(%letmv* (cdr bindings) forms)))))
+
+(defmacro letmv ((&rest bindings) &body forms)
+  (%letmv bindings forms))
+
+(defun %letmv (bindings forms)
+  (let* ((sym-swapped (mapcar (lambda (binding)
+                                (if (consp (car binding))
+                                  (cons  (mapcar (lambda (b)
+                                                   (declare (ignore b))
+                                                   (gensym))
+                                                 (car binding))
+                                         (cdr binding))
+                                  (cons (gensym) (cdr binding))))
+                              bindings))
+         (rebindings (apply #'append
+                            (mapcar (lambda (binding ss-binding)
+                                      (if (consp (car binding))
+                                        (mapcar (lambda (b-sym ssb-sym)
+                                                  (list b-sym ssb-sym))
+                                                (car binding)
+                                                (car ss-binding))
+                                        (list (list (car binding)
+                                                    (car ss-binding)))))
+                                    bindings
+                                    sym-swapped))))
+    `(letmv* ,sym-swapped
+       (let ,rebindings
+         ,@forms))))

@@ -2,6 +2,32 @@
 
 ;; helpers
 
+(utils:my-defconstant +digits+ (str->seq "0123456789"))
+(utils:my-defconstant +signs+ (str->seq "+-"))
+(utils:my-defconstant +whitespace+
+                      (mapcar
+                       #'char-code
+                       (list #\space ;; TODO: fill out rest of WS characters
+                             #\tab
+                             #\linefeed
+                             #\return)))
+(utils:my-defconstant +lf-code+ (char-code #\linefeed))
+(utils:my-defconstant +cr-code+ (char-code #\return))
+
+(defun digit-p (d)
+  (member d +digits+))
+(defun digit-value (d)
+  (- d (char-code #\0)))
+
+(defun sign-p (d)
+  (member d +signs+))
+
+(defun whitespace-p (c)
+  (member c +whitespace+))
+
+(defun set-pos (ind file)
+  (file-position file ind))
+
 (defun char-at (ind file)
   (file-position file ind)
   (read-byte file))
@@ -14,147 +40,105 @@
       (valid-seq-p (rest seq) file (1+ start))
       (values nil nil))))
 
-(utils:my-defconstant +digits+ (str->seq "0123456789"))
-(defun digit-p (d)
-  (member d +digits+))
-(defun digit-value (d)
-  (- d (char-code #\0)))
+(defun object-builder (init add-char success fail)
+  (lambda (start-ind file)
+    (set-pos start-ind file)
+    (let ((init-context (funcall init)))
+      (labels ((next-step (context)
+                 (let ((next-char (read-byte file)))
+                   (funcall add-char
+                            next-char
+                            context
+                            success
+                            fail
+                            (lambda (context1) (next-step context1))))))
+        (next-step init-context)))))
 
-(utils:my-defconstant +signs+ (str->seq "+-"))
-(defun sign-p (d)
-  (member d +signs+))
+(defun init-number-context (force-integer)
+  (let ((num 0)
+        (found-digit nil)
+        (found-decimal nil)
+        (pow 0)
+        (sign nil))
+    (labels ((add-char! (c success fail cont)
+               (declare (ignore fail))
+               (cond
+                 ((digit-p c)
+                  (setf num (+ (* 10 num) (digit-value c)))
+                  (setf found-digit t)
+                  (when found-decimal
+                    (decf pow))
+                  (funcall cont #'this-context))
+                 ((and (eq (char-code #\.) c)
+                       (not (or force-integer found-decimal)))
+                  (setf found-decimal t)
+                  (funcall cont #'this-context))
+                 ((and (sign-p c)
+                       (not found-digit))
+                  (setf sign c)
+                  (funcall cont #'this-context))
+                 (t
+                  (funcall success #'this-context))))
+             (this-context (message &rest args)
+               (ecase message
+                 ((add-char!) (apply #'add-char! args))
+                 ((cur-val) num)
+                 ((found-digit-p) found-digit)
+                 ((sign-pow-corrected)
+                  (let ((sign-corrected
+                         (if (eq (char-code #\-) sign)
+                           (- num)
+                           num)))
+                    (if found-decimal
+                      (* sign-corrected (expt 10 pow))
+                      sign-corrected))))))
+      #'this-context)))
 
-(utils:my-defconstant +whitespace+
-                      (mapcar
-                       #'char-code
-                       (list #\space ;; TODO: fill out rest of WS characters
-                             #\tab
-                             #\linefeed
-                             #\return)))
-(defun whitespace-p (c)
-  (member c +whitespace+))
+(defun number-builder (force-integer force-real success fail)
+  (object-builder
+   ;; init
+   (lambda () (init-number-context force-integer))
+   ;; add-char
+   (lambda (next-char context success fail cont)
+     (funcall context 'add-char! next-char success fail cont))
+   ;; success
+   (lambda (context)
+     (if (funcall context 'found-digit-p)
+       (let ((sign-pow-corrected (funcall context 'sign-pow-corrected)))
+         (funcall success
+                  (if force-real
+                    (float sign-pow-corrected)
+                    sign-pow-corrected)))
+       (funcall fail "No digit found in number")))
+   fail))
 
-(defun read-number (file
-                    start-ind
+(defun read-number (start-ind
+                    file
                     &key
                     (force-integer nil)
                     (force-real nil)
                     (skip-whitespace nil)
                     (err-p t))
-  (when (and force-integer force-real)
-    (error "Cannot provide both :force-integer and :force-real"))
-  (%read-number file
-                (if skip-whitespace
-                  (skip-whitespace start-ind file)
-                  start-ind)
-                force-integer
-                force-real
-                err-p))
-
-(defun %read-number (file start-ind force-integer force-real err-p)
-  (funcall (add-char file force-integer force-real)
-           start-ind
-           0
-           nil
-           nil
-           nil
-           0
-           (lambda (&rest args)
-             (if err-p
-               (apply #'error args)
-               (values 'error nil)))
-           (lambda (num ind)
-             (values num ind))))
-
-(defun add-char (file force-integer force-real)
-  (lambda (ind num sign found-decimal found-digit pow fail success)
-    (labels ((inner (ind num sign found-decimal found-digit pow)
-               (let ((c (char-at ind file)))
-                 (cond
-                   ((digit-p c)
-                    (inner (1+ ind)
-                           (+ (* 10 num)
-                              (digit-value c))
-                           sign
-                           found-decimal
-                           t
-                           (if found-decimal
-                             (1- pow)
-                             pow)))
-                   ((eq (char-code #\.) c)
-                    (if found-decimal
-                      (funcall fail "Multiple decimal points found in number")
-                      (inner (1+ ind)
-                             num
-                             sign
-                             t
-                             found-digit
-                             pow)))
-                   ((sign-p c)
-                    (if found-digit
-                      (funcall fail "Sign in the middle of a number")
-                      (inner (1+ ind)
-                             num
-                             c
-                             found-decimal
-                             found-digit
-                             pow)))
-                   (t
-                    (funcall (check-num-type force-integer force-real)
-                             ind
-                             num
-                             sign
-                             found-decimal
-                             found-digit
-                             pow
-                             fail
-                             success))))))
-      (inner ind num sign found-decimal found-digit pow))))
-
-(defun check-num-type (force-integer force-real)
-  (lambda (ind num sign found-decimal found-digit pow fail success)
-    (cond
-      ((not found-digit)
-       (funcall fail "No digit found in number"))
-      ((and force-integer found-decimal)
-       (funcall fail "Found decimal in integer"))
-      ((and force-real (not found-decimal))
-       (funcall fail "No decimal in real number"))
-      (t
-       (funcall (correct-pow force-real)
-                ind
-                num
-                sign
-                found-decimal
-                pow
-                success)))))
-
-(defun correct-pow (force-real)
-  (lambda (ind num sign found-decimal pow success)
-    (correct-sign ind
-                  (if force-real
-                    (float (if found-decimal
-                             (* num (expt 10 pow))
-                             num))
-                    num)
-                  sign
-                  success)))
-
-(defun correct-sign (ind num sign success)
-  (funcall success
-           (if (eq (char-code #\-) sign)
-             (- num)
-             num)
-           ind))
+  (let ((build-number (number-builder
+                       force-integer
+                       force-real
+                       (lambda (num)
+                         (values num (1- (file-position file))))
+                       (lambda (reason)
+                         (if err-p
+                           (error reason)
+                           (values 'error nil))))))
+    (funcall build-number
+             (if skip-whitespace
+               (skip-whitespace start-ind file)
+               start-ind)
+             file)))
 
 (defun skip-whitespace (cur-pos file)
   (let ((c (char-at cur-pos file)))
     (if (whitespace-p c)
       (skip-whitespace (1+ cur-pos) file)
       cur-pos)))
-
-(utils:my-defconstant +lf-code+ (char-code #\linefeed))
-(utils:my-defconstant +cr-code+ (char-code #\return))
 
 (defun line-start (from-ind file)
   (labels ((check-crlf ()
@@ -193,7 +177,7 @@
       (valid-seq-p (str->seq "%PDF-") file 0)
     (unless valid
       (error "Invalid pdf header"))
-    (read-number file version-start :force-real t)))
+    (read-number version-start file :force-real t)))
 
 (defun find-xref (file)
   (utils:letmv* ((len (file-length file))
@@ -209,22 +193,23 @@
     xref-entries))
 
 (defun last-eof-marker (last-stop file)
-  (multiple-value-bind (line-start line-ending)
-      (line-start last-stop file)
-    (multiple-value-bind (ind found-p)
-        (read-to (char-code #\%) file line-start last-stop)
-      (if (and found-p
-               (valid-seq-p (str->seq "%%EOF") file ind))
-        (cons line-start line-ending)
-        (last-eof-marker (back-by-ending line-start line-ending)
-                         file)))))
+  (utils:letmv* (((line-start line-ending) (line-start last-stop file))
+                 ((ind found-p) (read-to (char-code #\%)
+                                         file
+                                         line-start
+                                         last-stop)))
+    (if (and found-p
+             (valid-seq-p (str->seq "%%EOF") file ind))
+      (cons line-start line-ending)
+      (last-eof-marker (back-by-ending line-start line-ending)
+                       file))))
 
 (defun get-xref-byte-off (startxref-start file)
   (if (valid-seq-p (str->seq "startxref")
                    file
                    startxref-start)
-    (let ((byte-off (read-number file
-                                 (+ 9 startxref-start)
+    (let ((byte-off (read-number (+ 9 startxref-start)
+                                 file
                                  :force-integer t
                                  :skip-whitespace t)))
       (unless (valid-seq-p (str->seq "xref") file byte-off)
@@ -239,12 +224,11 @@
 
 (defun try-xref-subsections (subsection-start file)
   (multiple-value-bind (maybe-start-obj-num ind)
-      (read-number file subsection-start :force-integer t :err-p nil)
-    (format t "~A~%" maybe-start-obj-num)
+      (read-number subsection-start file :force-integer t :err-p nil)
     (if (eq maybe-start-obj-num 'error)
       '()
       (multiple-value-bind (entry-count after-ec)
-          (read-number file ind :force-integer t :skip-whitespace t)
+          (read-number ind file :force-integer t :skip-whitespace t)
         (let* ((entry-start (skip-whitespace after-ec file))
                (next-start (+ entry-start
                               (* 20 entry-count))))
@@ -264,8 +248,8 @@
                                    file))))
 
 (defun xref-subsection-entry (object-num entry-start file)
-  (let ((n1 (read-number file entry-start :force-integer t))
-        (n2 (read-number file (+ 11 entry-start) :force-integer t))
+  (let ((n1 (read-number entry-start file :force-integer t))
+        (n2 (read-number (+ 11 entry-start) file :force-integer t))
         (c (code-char (char-at (+ 17 entry-start) file))))
     (utils:condcase c
       (#\n (make-n-xref-entry object-num n2 n1))
