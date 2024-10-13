@@ -134,6 +134,18 @@
                start-ind)
              file)))
 
+(defun read-pdf-number (start-ind file)
+  (let ((build-number (number-builder
+                       nil
+                       nil
+                       (lambda (num)
+                         (values (objs::make-object 'number num)
+                                 (1- (file-position file))))
+                       #'error)))
+    (funcall build-number
+             (skip-whitespace start-ind file)
+             file)))
+
 (defun skip-whitespace (cur-pos file)
   (let ((c (char-at cur-pos file)))
     (if (whitespace-p c)
