@@ -8,6 +8,7 @@ TARGET = pdf_editor
 
 LIBS = libz.a
 PREF_LIBS = $(foreach L,$(LIBS),$(LIB)/$(L))
+STRIPPED_LIBS = $(patsubst lib%.a,%,$(LIBS))
 IWYU = ~/install/include-what-you-use/build/bin/include-what-you-use
 
 CC = gcc
@@ -26,7 +27,7 @@ gdb: $(BUILD)/$(TARGET)
 	gdb $(BUILD)/$(TARGET)
 
 $(BUILD)/$(TARGET): $(OBJ)
-	$(CC) $^ -L$(LIB) $(foreach L,$(LIBS),-l:$(L)) -o $@
+	$(CC) $^ -L$(LIB) $(foreach L,$(STRIPPED_LIBS),-l$(L)) -o $@
 
 $(OBJ): $(BUILD)/%.o: %.c | $(PREF_LIBS) dirs
 	$(CC) $(FLAGS) -c $< -o $@
