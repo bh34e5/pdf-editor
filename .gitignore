@@ -1,1 +1,9 @@
 build/
+lib/
+deps/*
+!deps/README.md
+
+.ccls
+
+# dont try to add the testing pdfs
+*.pdf

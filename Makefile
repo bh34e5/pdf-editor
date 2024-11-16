@@ -2,8 +2,12 @@ SRC = pdf_editor.c \
 	memory.c \
 	object.c
 BUILD = build
+DEPS = deps
+LIB = lib
 TARGET = pdf_editor
 
+LIBS = libz.a
+PREF_LIBS = $(foreach L,$(LIBS),$(LIB)/$(L))
 IWYU = ~/install/include-what-you-use/build/bin/include-what-you-use
 
 CC = gcc
@@ -22,18 +26,27 @@ gdb: $(BUILD)/$(TARGET)
 	gdb $(BUILD)/$(TARGET)
 
 $(BUILD)/$(TARGET): $(OBJ)
-	$(CC) $^ -o $@
+	$(CC) $^ -L$(LIB) $(foreach L,$(LIBS),-l:$(L)) -o $@
 
-$(OBJ): $(BUILD)/%.o: %.c | dirs
+$(OBJ): $(BUILD)/%.o: %.c | $(PREF_LIBS) dirs
 	$(CC) $(FLAGS) -c $< -o $@
 
-dirs: $(BUILD)
+$(LIB)/libz.a: | dirs
+	cd $(DEPS)/zlib-1.3.1 && ./configure --static
+	$(MAKE) -C $(DEPS)/zlib-1.3.1
+	cp $(DEPS)/zlib-1.3.1/libz.a $(LIB)
+
+dirs: $(LIB) $(BUILD)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
+$(LIB):
+	mkdir -p $(LIB)
+
 clean:
 	rm -f $(TARGET)
+	rm -rf $(LIB)
 	rm -rf $(BUILD)
 
 iwyu: $(IWYU_SRC)

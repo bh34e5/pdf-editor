@@ -51,9 +51,19 @@ struct pdf_dict {
     struct pdf_object *objects;
 };
 
+enum length_type {
+    LT_DIRECT,
+    LT_INDIRECT,
+};
+
 struct pdf_stream {
     struct pdf_dict meta;
     ssize_t offset;
+    enum length_type length_type;
+    union {
+        ssize_t direct;
+        struct pdf_ind_ref indirect;
+    };
 };
 
 enum object_type {
@@ -83,10 +93,28 @@ struct pdf_object {
     };
 };
 
+#define NAMES                                                                  \
+    X(catalog_name, "Catalog", 7)                                              \
+    X(contents_name, "Contents", 8)                                            \
+    X(count_name, "Count", 5)                                                  \
+    X(filter_name, "Filter", 6)                                                \
+    X(flate_decode_name, "FlateDecode", 11)                                    \
+    X(kids_name, "Kids", 4)                                                    \
+    X(length_name, "Length", 6)                                                \
+    X(page_name, "Page", 4)                                                    \
+    X(pages_name, "Pages", 5)                                                  \
+    X(root_name, "Root", 4)                                                    \
+    X(type_name, "Type", 4)
+
+#define X(obj, str, l) extern struct pdf_name const obj;
+NAMES
+#undef X
+
 struct pdf_object read_object_at(struct file file, ssize_t offset,
                                  struct arena *arena, ssize_t *end);
 
 bool objects_equal(struct pdf_object lhs, struct pdf_object rhs);
 
-bool has_entry(struct pdf_dict dict, struct pdf_name name);
-struct pdf_object get_entry(struct pdf_dict dict, struct pdf_name name);
+bool has_entry(struct pdf_dict const dict, struct pdf_name const name);
+struct pdf_object get_entry(struct pdf_dict const dict,
+                            struct pdf_name const name);

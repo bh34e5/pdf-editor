@@ -8,6 +8,10 @@
 
 struct arena;
 
+#define X(obj, str, l) struct pdf_name const obj = {.text = str, .len = l};
+NAMES
+#undef X
+
 static long hex_str_to_num(char const *text, ssize_t len) {
     long num = 0;
 
@@ -502,8 +506,10 @@ static struct pdf_dict read_dict_at(struct file file, ssize_t offset,
     return dict;
 }
 
-static struct pdf_object
-read_dict_or_stream_at(struct file file, ssize_t offset, struct arena *arena) {
+static struct pdf_object read_dict_or_stream_at(struct file file,
+                                                ssize_t offset,
+                                                struct arena *arena,
+                                                ssize_t *end) {
     ssize_t dict_end;
     struct pdf_dict dict = read_dict_at(file, offset, arena, &dict_end);
 
@@ -515,16 +521,57 @@ read_dict_or_stream_at(struct file file, ssize_t offset, struct arena *arena) {
 
     if (dict_end < file.len && c == 's') {
         if (string_matches_at(file, dict_end, "stream")) {
+            struct pdf_stream stream;
+
             ssize_t stream_start = next_line_start(file, dict_end);
-            struct pdf_stream stream = {
-                .meta = dict,
-                .offset = stream_start,
-            };
+
+            assert(has_entry(dict, length_name));
+            struct pdf_object length_obj = get_entry(dict, length_name);
+            switch (length_obj.type) {
+            case OBJ_NUMBER: {
+                assert(length_obj.number.type == NT_INTEGER);
+                stream = (struct pdf_stream){
+                    .meta = dict,
+                    .offset = stream_start,
+                    .length_type = LT_DIRECT,
+                    .direct = length_obj.number.integer,
+                };
+
+                ssize_t stream_end = stream_start + stream.direct;
+                ssize_t after_space = skip_whitespace(file, stream_end);
+                assert(after_space < file.len);
+                assert_string_at(file, after_space, "endstream");
+
+                if (end != NULL) {
+                    assert(after_space + 9 < file.len);
+                    *end = after_space + 9;
+                }
+            } break;
+            case OBJ_IND_REF: {
+                stream = (struct pdf_stream){
+                    .meta = dict,
+                    .offset = stream_start,
+                    .length_type = LT_INDIRECT,
+                    .indirect = length_obj.ref,
+                };
+
+                if (end != NULL) {
+                    *end = (ssize_t)-1; // FIXME(bhester): what to do here...
+                }
+            } break;
+            default:
+                assert(0 && "Invalid type of length key");
+            }
+
             return (struct pdf_object){
                 .type = OBJ_STREAM,
                 .stream = stream,
             };
         }
+    }
+
+    if (end != NULL) {
+        *end = dict_end;
     }
 
     return (struct pdf_object){
@@ -539,6 +586,8 @@ static inline bool is_numeric_char(char c) {
 
 struct pdf_number read_number_at(struct file file, ssize_t offset,
                                  struct arena *arena, ssize_t *end) {
+    (void)arena;
+
     char const *contents = file.contents;
     ssize_t len = file.len;
 
@@ -620,7 +669,7 @@ struct pdf_object read_object_at(struct file file, ssize_t offset,
     case '<': {
         assert(offset + 1 < len);
         if (contents[offset + 1] == '<') {
-            return read_dict_or_stream_at(file, offset, arena);
+            return read_dict_or_stream_at(file, offset, arena, end);
         }
 
         return (struct pdf_object){
@@ -849,11 +898,12 @@ static bool _has_entry(struct pdf_dict dict, struct pdf_name name,
     return false;
 }
 
-bool has_entry(struct pdf_dict dict, struct pdf_name name) {
+bool has_entry(struct pdf_dict const dict, struct pdf_name const name) {
     return _has_entry(dict, name, NULL);
 }
 
-struct pdf_object get_entry(struct pdf_dict dict, struct pdf_name name) {
+struct pdf_object get_entry(struct pdf_dict const dict,
+                            struct pdf_name const name) {
     ssize_t ind;
     assert(_has_entry(dict, name, &ind));
 
