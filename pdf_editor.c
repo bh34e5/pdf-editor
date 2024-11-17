@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -361,7 +362,7 @@ static inline struct pdf_dict assert_dict_type(struct pdf_object dict_obj,
 }
 
 static void print_stream_contents(struct file file, struct pdf_stream stream,
-                                  ssize_t len) {
+                                  ssize_t len, struct arena *arena) {
     if (has_entry(stream.meta, filter_name)) {
         struct pdf_object filter_obj = get_entry(stream.meta, filter_name);
         if (filter_obj.type == OBJ_ARRAY) {
@@ -379,30 +380,82 @@ static void print_stream_contents(struct file file, struct pdf_stream stream,
             assert(0 && "Unimplemented");
         }
 
-#define BUF_LEN (1 << 20)
+#define BUF_LEN 128
         char out_buf[BUF_LEN] = {0};
+        Bytef *out_casted = (Bytef *)out_buf;
 
         Bytef *contents = (Bytef *)file.contents;
-        z_stream ztream = {
+        z_stream d_stream = {
             .next_in = contents + stream.offset,
             .avail_in = len,
-            .next_out = (Bytef *)out_buf,
+            .next_out = out_casted,
             .avail_out = BUF_LEN,
-            .zalloc = NULL,
-            .zfree = NULL,
+            .zalloc = Z_NULL,
+            .zfree = Z_NULL,
             .opaque = NULL,
         };
+
+        assert(Z_OK == inflateInit(&d_stream));
+
+        char *stream_contents = NULL;
+        uLong last_read = 0;
+
+        int inflate_res;
+        do {
+            inflate_res = inflate(&d_stream, Z_SYNC_FLUSH);
+            if (!(inflate_res == Z_OK || inflate_res == Z_STREAM_END)) {
+                break;
+            }
+
+            char *new_contents = ARENA_REALLOC_N(char, arena, stream_contents,
+                                                 d_stream.total_out);
+            assert(new_contents != NULL);
+            stream_contents = new_contents;
+
+            uLong diff_bytes = d_stream.total_out - last_read;
+            memmove(stream_contents + last_read, out_buf, diff_bytes);
+            last_read = d_stream.total_out;
+
+            d_stream.next_out = out_casted;
+            d_stream.avail_out = BUF_LEN;
+        } while (inflate_res == Z_OK);
 #undef BUF_LEN
 
-        assert(Z_OK == inflateInit(&ztream));
-        int err = inflate(&ztream, Z_NO_FLUSH);
-        printf("got err %d\n", err);
-        assert(Z_STREAM_END == err);
-        assert(Z_OK == inflateEnd(&ztream));
+        printf("got inflate_res = %d\n", inflate_res);
+        assert(Z_STREAM_END == inflate_res);
+        assert(Z_OK == inflateEnd(&d_stream));
 
-        printf("Contents (len: %lu):\n%.*s\n", ztream.total_out,
-               (int)ztream.total_out, out_buf);
+        assert(stream_contents != NULL);
+        printf("Contents (len: %lu):\n%.*s\n", d_stream.total_out,
+               (int)d_stream.total_out, stream_contents);
     }
+}
+
+static struct pdf_dict get_first_page(struct pdf_file pdf_file,
+                                      struct pdf_dict pages_dict) {
+    assert(has_entry(pages_dict, kids_name));
+    struct pdf_object kids_obj = get_entry(pages_dict, kids_name);
+    assert(kids_obj.type == OBJ_ARRAY);
+    assert(kids_obj.array.count > 0);
+    struct pdf_object first_child_ref = kids_obj.array.objects[0];
+
+    assert(first_child_ref.type == OBJ_IND_REF);
+    struct pdf_object first_child = get_obj_ref(pdf_file, first_child_ref.ref);
+    assert(first_child.type == OBJ_DICT);
+    struct pdf_dict first_child_dict = first_child.dict;
+
+    assert(has_entry(first_child_dict, type_name));
+    struct pdf_object first_child_type = get_entry(first_child_dict, type_name);
+
+    struct pdf_object pages_type = {.type = OBJ_NAME, .name = pages_name};
+    struct pdf_object page_type = {.type = OBJ_NAME, .name = page_name};
+
+    if (objects_equal(first_child_type, pages_type)) {
+        return get_first_page(pdf_file, first_child_dict);
+    }
+
+    assert(objects_equal(first_child_type, page_type));
+    return first_child_dict;
 }
 
 int main(int argc, char const *argv[]) {
@@ -470,44 +523,31 @@ int main(int argc, char const *argv[]) {
 
     printf("The pdf %s has %ld pages.\n", filename, page_count);
 
-    if (page_count == 1) {
-        assert(has_entry(pages_dict, kids_name));
-        struct pdf_object kids_obj = get_entry(pages_dict, kids_name);
-        assert(kids_obj.type == OBJ_ARRAY);
-        struct pdf_array kids_arr = kids_obj.array;
-        assert(kids_arr.count == 1);
-        struct pdf_object pone_obj_ref = kids_arr.objects[0];
+    struct pdf_dict pone_dict = get_first_page(pdf_file, pages_dict);
+    struct pdf_object contents_obj =
+        get_ind_obj_from_dict(pdf_file, pone_dict, contents_name);
 
-        assert(pone_obj_ref.type == OBJ_IND_REF);
-        struct pdf_object pone_obj = get_obj_ref(pdf_file, pone_obj_ref.ref);
-        struct pdf_dict pone_dict = assert_dict_type(pone_obj, page_name);
+    printf("The contents has type %d. ", contents_obj.type);
+    if (contents_obj.type == OBJ_STREAM) {
+        struct pdf_stream stream = contents_obj.stream;
 
-        struct pdf_object contents_obj =
-            get_ind_obj_from_dict(pdf_file, pone_dict, contents_name);
+        ssize_t stream_len;
+        switch (stream.length_type) {
+        case LT_DIRECT: {
+            stream_len = stream.direct;
+        } break;
+        case LT_INDIRECT: {
+            struct pdf_ind_ref length_ref = stream.indirect;
+            struct pdf_object length_obj = get_obj_ref(pdf_file, length_ref);
+            assert(length_obj.type == OBJ_NUMBER &&
+                   length_obj.number.type == NT_INTEGER);
 
-        printf("The contents has type %d. ", contents_obj.type);
-        if (contents_obj.type == OBJ_STREAM) {
-            struct pdf_stream stream = contents_obj.stream;
-
-            ssize_t stream_len;
-            switch (stream.length_type) {
-            case LT_DIRECT: {
-                stream_len = stream.direct;
-            } break;
-            case LT_INDIRECT: {
-                struct pdf_ind_ref length_ref = stream.indirect;
-                struct pdf_object length_obj =
-                    get_obj_ref(pdf_file, length_ref);
-                assert(length_obj.type == OBJ_NUMBER &&
-                       length_obj.number.type == NT_INTEGER);
-
-                stream_len = length_obj.number.integer;
-            } break;
-            }
-            printf("The stream length is %ld\n", stream_len);
-
-            print_stream_contents(file, stream, stream_len);
+            stream_len = length_obj.number.integer;
+        } break;
         }
+        printf("The stream length is %ld\n", stream_len);
+
+        print_stream_contents(file, stream, stream_len, arena);
     }
 
     arena_pop(arena);
