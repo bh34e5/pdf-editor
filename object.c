@@ -642,6 +642,73 @@ struct pdf_number read_number_at(struct file file, ssize_t offset,
     }
 }
 
+static struct pdf_object read_number_or_ref_at(struct file file, ssize_t offset,
+                                               struct arena *arena,
+                                               ssize_t *end) {
+    char const *contents = file.contents;
+    ssize_t len = file.len;
+
+    ssize_t first_number_end;
+    struct pdf_number number =
+        read_number_at(file, offset, arena, &first_number_end);
+
+    if (number.type == NT_INTEGER) {
+        // we just read an integer, so if this is an indirect reference, we
+        // expect to read another integer followed by the keyword "R"
+
+        long gen_num = 0;
+
+        ssize_t cur_offset = skip_whitespace(file, first_number_end);
+        char c;
+
+        // loop to read the gen_num
+        while (cur_offset < len) {
+            if (!is_digit((c = contents[cur_offset]))) {
+                if (!is_whitespace(c)) {
+                    // expecting to read an integer followed by the "R" keyword
+                    // and we saw something neither a digit nor whitespace, so
+                    // break and return the number we first read
+                    break;
+                }
+
+                // read the "R" keyword and return the ref if correct
+                ssize_t after_space = skip_whitespace(file, cur_offset);
+                if (string_matches_at(file, after_space, "R")) {
+                    if (after_space + 1 < len &&
+                        (is_delimeter_char(contents[after_space + 1]) ||
+                         is_whitespace(contents[after_space + 1]))) {
+                        // this is a reference
+                        if (end != NULL) {
+                            *end = after_space + 1;
+                        }
+                        return (struct pdf_object){
+                            .type = OBJ_IND_REF,
+                            .ref =
+                                {
+                                    .obj_num = number.integer,
+                                    .gen_num = gen_num,
+                                },
+                        };
+                    }
+                }
+                // didn't get the ref, break and return the number we first read
+                break;
+            }
+            gen_num = (10 * gen_num) + (c - '0');
+            ++cur_offset;
+        }
+    }
+
+    if (end != NULL) {
+        *end = first_number_end;
+    }
+
+    return (struct pdf_object){
+        .type = OBJ_NUMBER,
+        .number = number,
+    };
+}
+
 struct pdf_object read_object_at(struct file file, ssize_t offset,
                                  struct arena *arena, ssize_t *end) {
     char const *contents = file.contents;
@@ -706,63 +773,7 @@ struct pdf_object read_object_at(struct file file, ssize_t offset,
                 .null = NULL,
             };
         } else if (is_numeric_char(c)) {
-            ssize_t first_number_end;
-            struct pdf_number number =
-                read_number_at(file, offset, arena, &first_number_end);
-
-            if (number.type == NT_INTEGER) {
-                // we just read an integer, so if this is an indirect
-                // reference, we expect to read another integer followed by
-                // the keyword "R"
-
-                long gen_num = 0;
-
-                ssize_t cur_offset = skip_whitespace(file, first_number_end);
-                char c2;
-                while (cur_offset < len) {
-                    if (!is_digit((c2 = contents[cur_offset]))) {
-                        if (is_whitespace(c2)) {
-                            ssize_t after_space =
-                                skip_whitespace(file, cur_offset);
-
-                            if (string_matches_at(file, after_space, "R")) {
-                                if (after_space + 1 < len &&
-                                    (is_delimeter_char(
-                                         contents[after_space + 1]) ||
-                                     is_whitespace(
-                                         contents[after_space + 1]))) {
-                                    // this is a reference
-                                    if (end != NULL) {
-                                        *end = after_space + 1;
-                                    }
-                                    return (struct pdf_object){
-                                        .type = OBJ_IND_REF,
-                                        .ref =
-                                            {
-                                                .obj_num = number.integer,
-                                                .gen_num = gen_num,
-                                            },
-                                    };
-                                }
-                            }
-                        }
-                        break;
-                    }
-
-                    gen_num = (10 * gen_num) + (c2 - '0');
-
-                    ++cur_offset;
-                }
-            }
-
-            if (end != NULL) {
-                *end = first_number_end;
-            }
-
-            return (struct pdf_object){
-                .type = OBJ_NUMBER,
-                .number = number,
-            };
+            return read_number_or_ref_at(file, offset, arena, end);
         }
 
         assert(0 && "Unimplemented");
