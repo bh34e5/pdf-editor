@@ -1,0 +1,13 @@
+# executable and mac debug files
+pdf-editor
+pdf-editor.dSYM/
+
+build/
+lib/
+
+# some build artifacts
+*.o
+*.a
+
+# dont try to add the testing pdfs
+*.pdf
