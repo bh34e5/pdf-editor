@@ -97,18 +97,19 @@ struct ZLibStream
 *>
 fn void! ZLibStream.new_init(&self, ZLibArgs args = DEFAULT_ARGS, Allocator allocator = allocator::heap())
 {
-	*self = {args, allocator, allocator::alloc(allocator, ZLibStream_)};
+	ZLibStream_* inner = allocator::new(allocator, ZLibStream_);
 
-	ZLibRet ret = _inflate_init(self.inner, self.args.flush);
+	ZLibRet ret = _inflate_init(inner, args.flush);
 	if (ret.is_fault()) return from_ret(ret)?;
-
 	assert(ret == Z_OK);
+
+	*self = {args, allocator, inner};
 }
 
 <*
  @require self.inner != null, "Not initialized"
 *>
-fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null)
+fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null, Allocator allocator = allocator::heap())
 {
 	ZLibStream_* inner = (ZLibStream_*)self.inner;
 	inner.next_in = data.ptr;
@@ -117,7 +118,7 @@ fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null)
 
 	ulong last_out = 0;
 
-	@pool()
+	@pool(allocator)
 	{
 		DString tmp = dstring::temp_new();
 
@@ -142,7 +143,7 @@ fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null)
 		if (ret.is_fault()) return from_ret(ret)?;
 
 		assert(ret == Z_STREAM_END);
-		return tmp.copy_str(self.allocator);
+		return tmp.copy_str(allocator);
 	};
 }
 

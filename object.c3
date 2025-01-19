@@ -41,6 +41,10 @@ struct PdfObject (Printable)
 	}
 }
 
+const PdfObject PDF_NULL  = {NULL, {.n = null}};
+const PdfObject PDF_TRUE  = {BOOL, {.b = true}};
+const PdfObject PDF_FALSE = {BOOL, {.b = false}};
+
 macro bool PdfObject.is(self, ObjectType $type) => self.type == $type;
 macro PdfObject.get_as(self, ObjectType $type) => self.try_get_as($type)!!;
 macro PdfObject.try_get_as(self, ObjectType $type)
@@ -186,6 +190,34 @@ enum PdfKeyword (Printable) : (String value)
 	RG_LL = "rg",
 }
 
+fn bool PdfObject.equals(self, PdfObject other)
+{
+	if (self.type != other.type) return false;
+	switch (self.type)
+	{
+		case NULL:
+			return true;
+		case BOOL:
+			return self.as.b == other.as.b;
+		case NUMBER:
+			return equals(self.as.number, other.as.number);
+		case NAME:
+			return equals(self.as.name, other.as.name);
+		case STRING:
+			return equals(self.as.string, other.as.string);
+		case ARRAY:
+			return equals(self.as.array, other.as.array);
+		case DICT:
+			return equals(self.as.dict, other.as.dict);
+		case STREAM:
+			return equals(self.as.stream, other.as.stream);
+		case IND_REF:
+			return equals(self.as.ref, other.as.ref);
+		case KEYWORD:
+			return self.as.keyword == other.as.keyword;
+	}
+}
+
 fn void PdfObject.free(self, Allocator allocator)
 {
 	switch (self.type)
@@ -236,6 +268,18 @@ fn usz! PdfObject.to_format(&self, Formatter* formatter) @dynamic
 	}
 }
 
+fn bool PdfNumber.equals(self, PdfNumber other)
+{
+	if (self.type != other.type) return false;
+	switch (self.type)
+	{
+		case INTEGER:
+			return self.as.integer == other.as.integer;
+		case REAL:
+			return self.as.real == other.as.real;
+	}
+}
+
 fn usz! PdfNumber.to_format(&self, Formatter* formatter) @dynamic
 {
 	switch (self.type)
@@ -253,6 +297,12 @@ fn usz! PdfName.to_format(&self, Formatter* formatter) @dynamic
 	String s = *self;
 	// FIXME(bhester) check on why `printf("/%s", (String)*self)` doesn't work
 	return formatter.printf("/%s", s);
+}
+
+fn bool PdfString.equals(self, PdfString other)
+{
+	if (self.type != other.type) return false;
+	return equals(self.text, other.text);
 }
 
 fn usz! PdfString.to_format(&self, Formatter* formatter) @dynamic
@@ -278,6 +328,11 @@ fn usz! PdfString.to_format(&self, Formatter* formatter) @dynamic
 }
 
 fn void PdfString.free(self, Allocator allocator) => self.text.free(allocator);
+
+fn bool PdfArray.equals(self, PdfArray other)
+{
+	return equals(self.list, other.list);
+}
 
 fn usz! PdfArray.to_format(&self, Formatter* formatter) @dynamic
 {
@@ -313,6 +368,20 @@ fn void PdfArray.free(self, Allocator allocator)
 	self.list.free();
 }
 
+fn bool PdfDict.equals(self, PdfDict other)
+{
+	HashMap(<PdfName, PdfObject>) s = self.map;
+	HashMap(<PdfName, PdfObject>) o = other.map;
+
+	if (s.len() != o.len()) return false;
+	foreach (e: s.iter())
+	{
+		if (!o.has_key(e.key)) return false;
+		if (!equals(e.value, o.get(e.key)!!)) return false;
+	}
+	return true;
+}
+
 fn usz! PdfDict.to_format(&self, Formatter* formatter) @dynamic
 {
 	if (self.map.is_empty())
@@ -343,6 +412,12 @@ fn void PdfDict.free(self, Allocator allocator)
 	self.map.free();
 }
 
+fn bool PdfStream.equals(self, PdfStream other)
+{
+	// TODO(bhester): verify this is a correct optimization
+	return self.contents.ptr == other.contents.ptr;
+}
+
 fn usz! PdfStream.to_format(&self, Formatter* formatter) @dynamic
 {
 	return formatter.printf("%s stream ... endstream", self.dict);
@@ -360,9 +435,11 @@ fn usz! PdfKeyword.to_format(&self, Formatter* formatter) @dynamic
 	return formatter.printf("%s", self.value);
 }
 
-macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf)
+fn bool PdfIndRef.equals(self, PdfIndRef other) => self.obj_num == other.obj_num && self.gen_num == other.gen_num;
+
+macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf, usz* len = null, anyfault $missing_fault = PdfFault.INVALID_OBJ_TYPE)
 {
-	PdfObject! obj = read_from(contents, pdf);
+	PdfObject! obj = read_from(contents, pdf, len);
 	if (try obj)
 	{
 		if (obj.type == $type)
@@ -372,7 +449,7 @@ macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf)
 		// wrong type, free resources
 		obj.free(pdf.allocator);
 	}
-	return PdfFault.INVALID_OBJ_TYPE?;
+	return $missing_fault?;
 }
 
 <*
@@ -425,17 +502,17 @@ fn PdfObject! read_from(String contents, Pdf *pdf, usz* len = null)
 			if (contents.starts_with("null"))
 			{
 				if (len != null) *len = 4;
-				return {NULL, {.n = null}};
+				return PDF_NULL;
 			}
 			else if (contents.starts_with("true"))
 			{
 				if (len != null) *len = 4;
-				return {BOOL, {.b = true}};
+				return PDF_TRUE;
 			}
 			else if (contents.starts_with("false"))
 			{
 				if (len != null) *len = 5;
-				return {BOOL, {.b = false}};
+				return PDF_FALSE;
 			}
 			else if (c.is_numeric_char())
 			{
@@ -800,16 +877,19 @@ fn PdfDict! read_dict_at(String contents, Pdf* pdf, usz* len)
 		}
 
 		usz obj_len;
-
-		PdfObject name_obj = read_from(cur_contents, pdf, &obj_len)!;
-		if (name_obj.type != ObjectType.NAME) return PdfFault.EXPECTED_NAME?;
+		PdfName name = try_read_expecting(
+			ObjectType.NAME,
+			cur_contents,
+			pdf,
+			&obj_len,
+			PdfFault.EXPECTED_NAME)!;
 
 		cur_contents = cur_contents[obj_len..];
 		common::@skip_whitespace(cur_contents);
 
 		PdfObject value_obj = read_from(cur_contents, pdf, &obj_len)!;
 
-		res.set(name_obj.as.name, value_obj);
+		res.set(name, value_obj);
 
 		cur_contents = cur_contents[obj_len..];
 	}
