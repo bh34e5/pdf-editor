@@ -7,6 +7,7 @@
         "object.c3",
         "pdf.c3",
         "pdf-editor.c3",
+        "stream.c3",
         "zlib.c3"
       ],
       "linked-libraries": ["z"],

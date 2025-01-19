@@ -19,6 +19,7 @@ $(DIRS):
 
 .PHONY: clean
 clean:
+	$(MAKE) -C deps/zlib-1.3.1/ clean
 	rm -rf build/
 	rm -rf lib/
 	rm -f pdf-editor

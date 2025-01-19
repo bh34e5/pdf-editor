@@ -110,6 +110,7 @@ distinct PdfName (Printable) = inline String;
 const PdfName CATALOG_NAME      = (PdfName)"Catalog";
 const PdfName CONTENTS_NAME     = (PdfName)"Contents";
 const PdfName COUNT_NAME        = (PdfName)"Count";
+const PdfName DECODEPARMS_NAME  = (PdfName)"DecodeParms";
 const PdfName FILTER_NAME       = (PdfName)"Filter";
 const PdfName FLATE_DECODE_NAME = (PdfName)"FlateDecode";
 const PdfName FONT_NAME         = (PdfName)"Font";
@@ -929,24 +930,6 @@ fn PdfStream! read_stream_at(String contents, PdfDict dict, Pdf* pdf, usz* len)
 
 	if (len != null) *len = after_stream.ptr - contents.ptr;
 	return {dict, stream_contents};
-}
-
-fn char[]! PdfStream.get_contents(self, Pdf* pdf)
-{
-	PdfDict d = self.dict;
-
-	PdfObject filters = d.get_entry(FILTER_NAME)!;
-	// TODO(bhester): figure this part out
-	if (filters.is(ObjectType.ARRAY)) unsupported();
-
-	PdfName filter_name = filters.get_as(ObjectType.NAME);
-	if (!equals(filter_name, FLATE_DECODE_NAME)) unsupported();
-
-	ZLibStream zstream;
-	zstream.new_init(allocator: pdf.allocator)!;
-	defer zstream.free();
-
-	return zstream.inflate_all(self.contents);
 }
 
 <*
