@@ -1,15 +1,30 @@
 DIRS = build lib
+LIBS = lib/libz.a lib/libraylib.a
+CONFIG-LOCK = .is-configured
 
-pdf-editor: lib/libz.a *.c3 project.json
+.PHONY: clean configure libs
+
+pdf-editor: libs *.c3 project.json Makefile
 	c3c build pdf-editor
 
-lib/libz.a: $(DIRS)
-	mkdir -p lib/
+configure: $(CONFIG-LOCK)
 
-	$(MAKE) -C deps/zlib-1.3.1/
+libs: $(CONFIG-LOCK) $(LIBS)
+
+$(CONFIG-LOCK):
+	bash -c "cd deps/zlib/ && ./configure"
+	bash -c "cd deps/raylib/ && cmake -S ."
+	touch $(CONFIG-LOCK)
+
+lib/libz.a: $(DIRS)
+	$(MAKE) -C deps/zlib/
 	gcc -c deps/shims/zlib.c -o build/libc_shim.o
-	cp deps/zlib-1.3.1/libz.a lib/
+	cp deps/zlib/libz.a lib/
 	ar -r lib/libz.a build/libc_shim.o
+
+lib/libraylib.a: $(DIRS)
+	$(MAKE) -C deps/raylib/
+	cp deps/raylib/raylib/libraylib.a lib/
 
 test_ref: pdf-editor
 	./pdf-editor reference1.0.pdf
@@ -17,10 +32,10 @@ test_ref: pdf-editor
 $(DIRS):
 	mkdir -p $(DIRS)
 
-.PHONY: clean
 clean:
-	$(MAKE) -C deps/zlib-1.3.1/ clean
-	rm -rf build/
-	rm -rf lib/
+	$(MAKE) -C deps/zlib/ clean
+	$(MAKE) -C deps/raylib/ clean
+	rm -rf $(DIRS)
+	rm -f $(CONFIG-LOCK)
 	rm -f pdf-editor
 	rm -rf pdf-editor.dSYM/

@@ -8,6 +8,7 @@ lib/
 # some build artifacts
 *.o
 *.a
+.is-configured
 
 # dont try to add the testing pdfs
 *.pdf

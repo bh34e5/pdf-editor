@@ -10,7 +10,7 @@
         "stream.c3",
         "zlib.c3"
       ],
-      "linked-libraries": ["z"],
+      "linked-libraries": ["raylib", "z"],
       "linker-search-paths": ["lib/"]
     }
   }

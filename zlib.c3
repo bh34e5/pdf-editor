@@ -93,7 +93,7 @@ struct ZLibStream
 }
 
 <*
- @require self.inner == null, "Already initialized"
+ @require self.inner == null "Already initialized"
 *>
 fn void! ZLibStream.new_init(&self, ZLibArgs args = DEFAULT_ARGS, Allocator allocator = allocator::heap())
 {
@@ -107,7 +107,7 @@ fn void! ZLibStream.new_init(&self, ZLibArgs args = DEFAULT_ARGS, Allocator allo
 }
 
 <*
- @require self.inner != null, "Not initialized"
+ @require self.inner != null "Not initialized"
 *>
 fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null, Allocator allocator = allocator::heap())
 {
@@ -148,7 +148,7 @@ fn char[]! ZLibStream.inflate_all(self, char[] data, ZLibRet* p_ret = null, Allo
 }
 
 <*
- @require self.inner != null, "Not initialized"
+ @require self.inner != null "Not initialized"
 *>
 fn void ZLibStream.free(self)
 {
