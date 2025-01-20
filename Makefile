@@ -9,42 +9,46 @@ ifeq ($(UNAME_S),Darwin)
 	TARGET = macos-x64
 endif
 
-.PHONY: clean configure libs
+.PHONY: clean
 
-pdf-editor: libs *.c3 project.json Makefile
+pdf-editor: $(LIBS) *.c3 project.json Makefile | $(CONFIG-LOCK)
 	c3c build $(TARGET)
 
-configure: $(CONFIG-LOCK)
+lib/libz.a: build/libz_shim.o deps/zlib/libz.a | $(DIRS)
+	cp deps/zlib/libz.a lib/
+	ar -r lib/libz.a build/libz_shim.o
 
-libs: $(CONFIG-LOCK) $(LIBS)
+lib/libraylib.a: deps/raylib/raylib/libraylib.a | $(DIRS)
+	cp deps/raylib/raylib/libraylib.a lib/
+
+lib/libraygui.a: build/raygui_shim.o lib/libraylib.a | $(DIRS)
+	ar -r lib/libraygui.a build/raygui_shim.o
+
+build/libz_shim.o: deps/shims/zlib.c | $(DIRS)
+	gcc -c deps/shims/zlib.c -o build/libz_shim.o
+
+build/raygui_shim.o: deps/shims/raygui.c | $(DIRS)
+	gcc -Ideps/raylib/src/ -c deps/shims/raygui.c -o build/raygui_shim.o
+
+deps/zlib/libz.a:
+	$(MAKE) -C deps/zlib/
+
+deps/raylib/raylib/libraylib.a:
+	$(MAKE) -C deps/raylib/
+
+$(DIRS):
+	mkdir -p $(DIRS)
 
 $(CONFIG-LOCK):
 	bash -c "cd deps/zlib/ && ./configure"
 	bash -c "cd deps/raylib/ && cmake -S ."
 	touch $(CONFIG-LOCK)
 
-lib/libz.a: | $(DIRS)
-	$(MAKE) -C deps/zlib/
-	gcc -c deps/shims/zlib.c -o build/libz_shim.o
-	cp deps/zlib/libz.a lib/
-	ar -r lib/libz.a build/libz_shim.o
-
-lib/libraylib.a: | $(DIRS)
-	$(MAKE) -C deps/raylib/
-	cp deps/raylib/raylib/libraylib.a lib/
-
-lib/libraygui.a: lib/libraylib.a | $(DIRS)
-	gcc -Ideps/raylib/src/ -c deps/shims/raygui.c -o build/raygui_shim.o
-	ar -r lib/libraygui.a build/raygui_shim.o
-
 test_ref: pdf-editor
 	./pdf-editor reference1.0.pdf
 
 test_sobel: pdf-editor
 	./pdf-editor sobel.pdf
-
-$(DIRS):
-	mkdir -p $(DIRS)
 
 clean:
 	$(MAKE) -C deps/zlib/ clean
