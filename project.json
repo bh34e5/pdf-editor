@@ -1,6 +1,7 @@
 {
   "targets": {
-    "pdf-editor": {
+    "windows-x64": {
+      "name": "pdf-editor",
       "type": "executable",
       "sources": [
         "common.c3",
@@ -14,6 +15,31 @@
       ],
       "linked-libraries": ["raygui", "raylib", "z"],
       "linker-search-paths": ["lib/"]
+    },
+    "macos-x64": {
+      "name": "pdf-editor",
+      "type": "executable",
+      "sources": [
+        "common.c3",
+        "object.c3",
+        "pdf.c3",
+        "pdf-editor.c3",
+        "raygui.c3",
+        "raylib.c3",
+        "stream.c3",
+        "zlib.c3"
+      ],
+      "linked-libraries": ["raygui", "raylib", "z"],
+      "linker-search-paths": ["lib/"],
+      // additional link options needed on macos for some reason...
+      "link-args": [
+        "-framework",
+        "Cocoa",
+        "-framework",
+        "IOKit",
+        "-framework",
+        "CoreFoundation"
+      ]
     }
   }
 }
