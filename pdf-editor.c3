@@ -2,6 +2,8 @@ module pdf::editor;
 
 import std::io;
 
+import raygui::rg;
+import raylib55::rl;
 import pdf::object;
 
 fn int main(String[] args)
@@ -13,6 +15,8 @@ fn int main(String[] args)
 		tracked.print_report();
 		tracked.free();
 	}
+
+	test_gui();
 
 	Allocator allocator = &tracked;
 	mem::@scoped(allocator)
@@ -71,4 +75,31 @@ fn int wrapper(String[] args, Allocator allocator = allocator::heap())
 	io::printfn("The contents were:\n%s", (String)stream_contents);
 
 	return 0;
+}
+
+fn void test_gui()
+{
+	rl::initWindow(800, 600, "Hello from PDF editor");
+	rl::setTargetFps(60);
+	defer rl::closeWindow();
+
+	bool showMessageBox = false;
+
+	while (!rl::windowShouldClose())
+	{
+		rl::beginDrawing();
+		rl::clearBackground(rl::getColor(rg::guiGetStyle(GuiControl.DEFAULT, GuiDefaultProperty.BACKGROUND_COLOR)));
+
+		Rectangle rect = { 24, 24, 120, 30 };
+		if (rg::guiButton(rect, "#191#Show Message")) showMessageBox = true;
+
+		if (showMessageBox)
+		{
+			Rectangle mb_rect = { 85, 70, 250, 100 };
+			int result = rg::guiMessageBox(mb_rect, "#191#Message Box", "Hi! This is a message!", "Nice;Cool");
+			if (result >= 0) showMessageBox = false;
+		}
+
+		rl::endDrawing();
+	}
 }

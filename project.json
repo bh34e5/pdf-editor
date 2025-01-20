@@ -7,10 +7,12 @@
         "object.c3",
         "pdf.c3",
         "pdf-editor.c3",
+        "raygui.c3",
+        "raylib.c3",
         "stream.c3",
         "zlib.c3"
       ],
-      "linked-libraries": ["raylib", "z"],
+      "linked-libraries": ["raygui", "raylib", "z"],
       "linker-search-paths": ["lib/"]
     }
   }
