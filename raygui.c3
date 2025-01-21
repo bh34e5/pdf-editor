@@ -73,7 +73,63 @@ macro int guiGetStyle(GuiControl control, guiProperty)
 	$endswitch
 }
 
+macro int guiSetStyle(GuiControl control, guiProperty, int value)
+{
+	$switch ($typeof(guiProperty))
+		$case GuiControlProperty:
+		$case GuiDefaultProperty:
+			return _guiSetStyle(control, guiProperty.value, value);
+		$default:
+			// TODO(bhester): list the valid property types
+			$error "Invalid property type";
+	$endswitch
+}
+
 extern fn int _guiGetStyle(GuiControl, int) @extern("GuiGetStyle") @private;
-extern fn bool guiButton(Rectangle, CString) @extern("GuiButton");
-extern fn int guiMessageBox(Rectangle, CString, CString, CString) @extern("GuiMessageBox");
+extern fn int _guiSetStyle(GuiControl, int, int) @extern("GuiSetStyle") @private;
+extern fn bool guiButton(Rectangle, char*) @extern("GuiButton");
+extern fn bool guiLabel(Rectangle, char*) @extern("GuiLabel");
+extern fn int guiMessageBox(Rectangle, char*, char*, char*) @extern("GuiMessageBox");
+extern fn void guiLock() @extern("GuiLock");
+extern fn void guiUnlock() @extern("GuiUnlock");
+
+// GuiFileDialog
+
+struct GuiWindowFileDialogState
+{
+	// Window management variables
+	bool windowActive;
+	Rectangle windowBounds;
+	Vector2 panOffset;
+	bool dragMode;
+	bool supportDrag;
+
+	// UI variables
+	bool dirPathEditMode;
+	char[1024] dirPathText;
+
+	int filesListScrollIndex;
+	bool filesListEditMode;
+	int filesListActive;
+
+	bool fileNameEditMode;
+	char[1024] fileNameText;
+	bool selectFilePressed;
+	bool cancelFilePressed;
+	int fileTypeActive;
+	int itemFocused;
+
+	// Custom state variables
+	FilePathList dirFiles;
+	char[256] filterExt;
+	char[1024] dirPathTextCopy;
+	char[1024] fileNameTextCopy;
+
+	int prevFilesListActive;
+
+	bool saveFileMode;
+}
+
+extern fn GuiWindowFileDialogState initGuiWindowFileDialog() @extern("InitGuiWindowFileDialog");
+extern fn void guiWindowFileDialog(GuiWindowFileDialogState*) @extern("GuiWindowFileDialog");
 //extern fn gui() @extern("");
