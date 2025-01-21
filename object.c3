@@ -438,7 +438,7 @@ fn usz! PdfKeyword.to_format(&self, Formatter* formatter) @dynamic
 
 fn bool PdfIndRef.equals(self, PdfIndRef other) => self.obj_num == other.obj_num && self.gen_num == other.gen_num;
 
-macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf, usz* len = null, anyfault $missing_fault = PdfFault.INVALID_OBJ_TYPE)
+macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf, usz* len = null, anyfault $fault = PdfFault.INVALID_OBJ_TYPE)
 {
 	PdfObject! obj = read_from(contents, pdf, len);
 	if (try obj)
@@ -450,7 +450,7 @@ macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf, usz* len =
 		// wrong type, free resources
 		obj.free(pdf.allocator);
 	}
-	return $missing_fault?;
+	return $fault?;
 }
 
 <*
@@ -460,7 +460,7 @@ macro try_read_expecting(ObjectType $type, String contents, Pdf* pdf, usz* len =
 
  @require pdf != null
 *>
-fn PdfObject! read_from(String contents, Pdf *pdf, usz* len = null)
+fn PdfObject! read_from(String contents, Pdf* pdf, usz* len = null)
 {
 	if (!contents.len) return PdfFault.END_OF_FILE?;
 
@@ -468,11 +468,11 @@ fn PdfObject! read_from(String contents, Pdf *pdf, usz* len = null)
 	switch (c)
 	{
 		case '/':
-			return {NAME, {.name = read_name_at(contents, pdf, len)}};
+			return {NAME, {.name = read_name_at(contents, pdf.allocator, len)}};
 		case '[':
 			return {ARRAY, {.array = read_array_at(contents, pdf, len)}};
 		case '(':
-			return {STRING, {.string = read_pstring_at(contents, pdf, len)}};
+			return {STRING, {.string = read_pstring_at(contents, pdf.allocator, len)}};
 		case '<':
 			if (contents.len < 2) return PdfFault.END_OF_FILE?;
 			if (contents[1] == '<')
@@ -498,7 +498,7 @@ fn PdfObject! read_from(String contents, Pdf *pdf, usz* len = null)
 					return {DICT, {.dict = dict}};
 				}
 			}
-			return {STRING, {.string = read_bstring_at(contents, pdf, len)}};
+			return {STRING, {.string = read_bstring_at(contents, pdf.allocator, len)}};
 		default:
 			if (contents.starts_with("null"))
 			{
@@ -603,7 +603,7 @@ fn PdfNumber! read_number_at(String contents, usz* len)
 	}
 }
 
-fn PdfName! read_name_at(String contents, Pdf* pdf, usz* len)
+fn PdfName! read_name_at(String contents, Allocator allocator, usz* len)
 {
 	// TODO(bhester): work on interning the strings!
 	common::@assert_starts_with(contents, '/');
@@ -636,21 +636,22 @@ fn PdfName! read_name_at(String contents, Pdf* pdf, usz* len)
 		}
 
 		if (len != null) *len = 1 /* slash */ + ind;
-		return (PdfName)tmp.copy_str(pdf.allocator);
+		return (PdfName)tmp.copy_str(allocator);
 	};
 }
 
 fn PdfArray! read_array_at(String contents, Pdf* pdf, usz* len)
 {
+	Allocator allocator = pdf.allocator;
 	String cur_contents = contents;
 
 	List(<PdfObject>) res;
-	res.new_init(allocator: pdf.allocator);
+	res.new_init(allocator: allocator);
 	defer catch
 	{
 		foreach (obj: res)
 		{
-			obj.free(pdf.allocator);
+			obj.free(allocator);
 		}
 		res.free();
 	}
@@ -681,7 +682,7 @@ fn PdfArray! read_array_at(String contents, Pdf* pdf, usz* len)
 	return {res};
 }
 
-fn PdfString! read_pstring_at(String contents, Pdf* pdf, usz* len)
+fn PdfString! read_pstring_at(String contents, Allocator allocator, usz* len)
 {
 	common::@assert_starts_with(contents, '(', false);
 	@pool()
@@ -798,11 +799,11 @@ fn PdfString! read_pstring_at(String contents, Pdf* pdf, usz* len)
 		if (c != ')') return PdfFault.UNEXPECTED_CHARACTER?;
 
 		if (len != null) *len = ind + 1 /* close paren */;
-		return {PAREN, tmp.copy_str(pdf.allocator)};
+		return {PAREN, tmp.copy_str(allocator)};
 	};
 }
 
-fn PdfString! read_bstring_at(String contents, Pdf* pdf, usz* len)
+fn PdfString! read_bstring_at(String contents, Allocator allocator, usz* len)
 {
 	common::@assert_starts_with(contents, '<', false);
 	@pool()
@@ -846,22 +847,23 @@ fn PdfString! read_bstring_at(String contents, Pdf* pdf, usz* len)
 		common::@assert_starts_with(cur_contents, '>');
 
 		if (len != null) *len = cur_contents.ptr - contents.ptr;
-		return {BRACE, tmp.copy_str(pdf.allocator)};
+		return {BRACE, tmp.copy_str(allocator)};
 	};
 }
 
 fn PdfDict! read_dict_at(String contents, Pdf* pdf, usz* len)
 {
+	Allocator allocator = pdf.allocator;
 	String cur_contents = contents;
 
 	HashMap(<PdfName, PdfObject>) res;
-	res.new_init(allocator: pdf.allocator);
+	res.new_init(allocator: allocator);
 	defer catch
 	{
 		res.@each(; PdfName name, PdfObject entry)
 		{
-			name.free(pdf.allocator);
-			entry.free(pdf.allocator);
+			name.free(allocator);
+			entry.free(allocator);
 		};
 		res.free();
 	}
@@ -878,12 +880,7 @@ fn PdfDict! read_dict_at(String contents, Pdf* pdf, usz* len)
 		}
 
 		usz obj_len;
-		PdfName name = try_read_expecting(
-			ObjectType.NAME,
-			cur_contents,
-			pdf,
-			&obj_len,
-			PdfFault.EXPECTED_NAME)!;
+		PdfName name = try_read_expecting(ObjectType.NAME, cur_contents, pdf, &obj_len, PdfFault.EXPECTED_NAME)!;
 
 		cur_contents = cur_contents[obj_len..];
 		common::@skip_whitespace(cur_contents);
@@ -965,6 +962,17 @@ fn PdfIndRef! cont_read_ind_ref_at(String contents, PdfNumber num, usz* len)
 
 	if (len != null) *len = after_gen[1..].ptr - contents.ptr;
 	return {obj_num, gen_num};
+}
+
+fn uint PdfIndRef.hash(self)
+{
+	const uint PRIME = 59;
+
+	uint result = 1;
+	result = (result * PRIME) + self.obj_num.hash();
+	result = (result * PRIME) + self.gen_num.hash();
+
+	return result;
 }
 
 fn PdfKeyword! try_read_keyword(String contents)

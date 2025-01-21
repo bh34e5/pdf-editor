@@ -48,8 +48,6 @@ fn char[]! PdfStream.get_contents(self, Pdf* pdf)
 			result = decode_stream(result, filter_name, parm, allocator::temp())!;
 		}
 
-		io::printf("after that: %s", result);
-
 		char[] copy = allocator::new_array(pdf.allocator, char, result.len);
 		mem::copy(copy.ptr, result.ptr, result.len);
 		return copy;

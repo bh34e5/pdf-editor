@@ -1,6 +1,7 @@
 module pdf;
 
 import std::io::file;
+import std::collections::map;
 
 fault PdfFault
 {
@@ -18,6 +19,9 @@ struct Pdf {
 	String contents;
 	Version version;
 	XRef xref;
+	PdfDict catalog;
+
+	HashMap(<PdfIndRef, PdfObject>) objects;
 }
 
 struct Version
@@ -66,25 +70,16 @@ struct XRefEntry
 
 fn void Pdf.cleanup(self)
 {
-	XRef* xref = &self.xref;
-	while (xref != null)
+	foreach (val: self.objects.value_iter())
 	{
-		XRef* cur_xref = xref;
-		defer
-		{
-			// only free the current xref if it's an allocated one
-			if (cur_xref != &self.xref) allocator::free(self.allocator, cur_xref);
-		}
-
-		foreach (section: xref.sections)
-		{
-			allocator::free(self.allocator, section.entries.ptr);
-		}
-		allocator::free(self.allocator, xref.sections.ptr);
-		xref.trailer.free(self.allocator);
-
-		xref = xref.prev;
+		val.free(self.allocator);
 	}
+	self.objects.free();
+
+	// NOTE(bhester): no need to cleanup up the catalog, it was an indirect
+	// reference, so it gets cleaned up in the loop above
+	// self.catalog.free(self.allocator);
+	self.xref.cleanup(self.allocator);
 	self.contents.free(self.allocator);
 }
 
@@ -93,6 +88,8 @@ fn void Pdf.cleanup(self)
 *>
 fn PdfObject! Pdf.get_ref(&self, PdfIndRef ref)
 {
+	if (self.objects.has_key(ref)) return self.objects.get(ref)!!;
+
 	XRef* xref = &self.xref;
 	while FIND_REF: (xref != null)
 	{
@@ -121,28 +118,67 @@ fn PdfObject! Pdf.get_ref(&self, PdfIndRef ref)
 						return PdfFault.INVALID_XREF?;
 					}
 
-					return object::read_from(text, self);
+					PdfObject object = object::read_from(text, self)!;
+					self.objects.set(ref, object);
+
+					return object;
 				}
 				// we are in the "newest" xref, so if we see it here, but it's
 				// invalid, we should stop looking for it.
 				break FIND_REF;
 			}
 		}
+		xref = xref.prev;
 	}
 	return PdfFault.INVALID_IND_REF?;
 }
 
 fn Pdf*! read_new(String filename, Allocator allocator = allocator::heap())
 {
-	Pdf* pdf = allocator::new(allocator, Pdf);
-	pdf.allocator = allocator;
-
 	String contents = (String)file::load_new(filename, allocator)!;
-	Version v = get_version(contents)!;
-	XRef xref = read_xref_new(contents, pdf, allocator)!;
+	defer catch contents.free(allocator);
 
-	*pdf = {allocator, contents, v, xref};
+	Pdf* pdf = allocator::new(allocator, Pdf);
+	defer catch
+	{
+		foreach (val: pdf.objects.value_iter())
+		{
+			val.free(allocator);
+		}
+		pdf.objects.free();
+		pdf.xref.cleanup(allocator);
+	}
+
+	pdf.allocator = allocator;
+	pdf.contents = contents;
+	pdf.objects.new_init(allocator: allocator);
+
+	pdf.version = get_version(contents)!;
+	pdf.xref = read_xref_new(contents, pdf, allocator)!;
+
+	PdfDict trailer_dict = pdf.xref.trailer;
+	PdfIndRef catalog_ref = trailer_dict.get_entry(object::ROOT_NAME).get_as(ObjectType.IND_REF)!;
+
+	pdf.catalog = pdf.get_ref(catalog_ref).get_as(ObjectType.DICT)!;
+
+	// TODO(bhester): validate that all the fields have been set properly?
 	return pdf;
+}
+
+fn uint page_count(Pdf* pdf)
+{
+	PdfIndRef page_ref = pdf.catalog.get_entry(object::PAGES_NAME).get_as(ObjectType.IND_REF)!!;
+	PdfDict pages_root = pdf.get_ref(page_ref).get_as(ObjectType.DICT)!!;
+
+	PdfObject count_obj = pages_root.get_entry(object::COUNT_NAME)!!;
+	if (count_obj.is(ObjectType.IND_REF))
+	{
+		count_obj = pdf.get_ref(count_obj.get_as(ObjectType.IND_REF))!!;
+	}
+	usz count_num = count_obj.get_as(ObjectType.NUMBER).get_as(NumberType.INTEGER);
+
+	assert(count_num < uint.max);
+	return (uint)count_num;
 }
 
 module pdf @private;
@@ -161,6 +197,19 @@ fn Version! get_version(String contents)
 	assert(minor >= 0);
 
 	return {major, minor};
+}
+
+fn void XRef.cleanup(self, Allocator allocator)
+{
+	if (self.prev != null) self.prev.cleanup(allocator);
+
+	self.trailer.free(allocator);
+	foreach (section: self.sections)
+	{
+		allocator::free(allocator, section.entries.ptr);
+	}
+	allocator::free(allocator, self.sections.ptr);
+	allocator::free(allocator, self.prev);
 }
 
 fn XRef! read_xref_new(String contents, Pdf* pdf, Allocator allocator)
