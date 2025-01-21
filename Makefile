@@ -25,10 +25,10 @@ lib/libraygui.a: build/raygui_shim.o lib/libraylib.a | $(DIRS)
 	ar -r lib/libraygui.a build/raygui_shim.o
 
 build/libz_shim.o: deps/shims/zlib.c | $(DIRS)
-	gcc -c deps/shims/zlib.c -o build/libz_shim.o
+	gcc -g -c deps/shims/zlib.c -o build/libz_shim.o
 
 build/raygui_shim.o: deps/shims/raygui.c | $(DIRS)
-	gcc -Ideps/raylib/src/ -c deps/shims/raygui.c -o build/raygui_shim.o
+	gcc -g -Ideps/raylib/src/ -c deps/shims/raygui.c -o build/raygui_shim.o
 
 deps/zlib/libz.a:
 	$(MAKE) -C deps/zlib/
