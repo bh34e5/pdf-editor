@@ -30,20 +30,20 @@ fn char[]! PdfStream.get_contents(self, Pdf* pdf)
 
 	@pool()
 	{
-		if (filters.is(ObjectType.ARRAY))
+		if (filters.is(ARRAY))
 		{
-			PdfArray filters_arr = filters.get_as(ObjectType.ARRAY);
-			PdfArray! decode_arr = decode_parms.get_as(ObjectType.ARRAY);
+			PdfArray filters_arr = filters.get_as(ARRAY);
+			PdfArray! decode_arr = decode_parms.get_as(ARRAY);
 			foreach (i, filter: filters_arr.list)
 			{
-				PdfName filter_name = filter.get_as(ObjectType.NAME);
+				PdfName filter_name = filter.get_as(NAME);
 				PdfObject parm = @ok(decode_arr) ? decode_arr!.list[i] : object::PDF_NULL;
 				result = decode_stream(result, filter_name, parm, allocator::temp())!;
 			}
 		}
 		else
 		{
-			PdfName filter_name = filters.get_as(ObjectType.NAME);
+			PdfName filter_name = filters.get_as(NAME);
 			PdfObject parm = decode_parms ?? object::PDF_NULL;
 			result = decode_stream(result, filter_name, parm, allocator::temp())!;
 		}

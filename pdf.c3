@@ -68,6 +68,38 @@ struct XRefEntry
 	}
 }
 
+fn Pdf*! read_new(String filename, Allocator allocator = allocator::heap())
+{
+	String contents = (String)file::load_new(filename, allocator)!;
+	defer catch contents.free(allocator);
+
+	Pdf* pdf = allocator::new(allocator, Pdf);
+	defer catch
+	{
+		foreach (val: pdf.objects.value_iter())
+		{
+			val.free(allocator);
+		}
+		pdf.objects.free();
+		pdf.xref.cleanup(allocator);
+	}
+
+	pdf.allocator = allocator;
+	pdf.contents = contents;
+	pdf.objects.new_init(allocator: allocator);
+
+	pdf.version = get_version(contents)!;
+	pdf.xref = read_xref_new(contents, pdf, allocator)!;
+
+	PdfDict trailer_dict = pdf.xref.trailer;
+	PdfIndRef catalog_ref = trailer_dict.get_entry(object::ROOT_NAME).get_as(IND_REF)!;
+
+	pdf.catalog = pdf.get_ref(catalog_ref).get_as(DICT)!;
+
+	// TODO(bhester): validate that all the fields have been set properly?
+	return pdf;
+}
+
 fn void Pdf.cleanup(self)
 {
 	foreach (val: self.objects.value_iter())
@@ -82,6 +114,8 @@ fn void Pdf.cleanup(self)
 	self.xref.cleanup(self.allocator);
 	self.contents.free(self.allocator);
 }
+
+macro Pdf.get_ref_as(&self, ObjectType $type, PdfIndRef ref) => self.get_ref(ref).get_as($type);
 
 <*
  @require self.contents.len > 0
@@ -133,49 +167,17 @@ fn PdfObject! Pdf.get_ref(&self, PdfIndRef ref)
 	return PdfFault.INVALID_IND_REF?;
 }
 
-fn Pdf*! read_new(String filename, Allocator allocator = allocator::heap())
+fn uint Pdf.page_count(&self)
 {
-	String contents = (String)file::load_new(filename, allocator)!;
-	defer catch contents.free(allocator);
-
-	Pdf* pdf = allocator::new(allocator, Pdf);
-	defer catch
-	{
-		foreach (val: pdf.objects.value_iter())
-		{
-			val.free(allocator);
-		}
-		pdf.objects.free();
-		pdf.xref.cleanup(allocator);
-	}
-
-	pdf.allocator = allocator;
-	pdf.contents = contents;
-	pdf.objects.new_init(allocator: allocator);
-
-	pdf.version = get_version(contents)!;
-	pdf.xref = read_xref_new(contents, pdf, allocator)!;
-
-	PdfDict trailer_dict = pdf.xref.trailer;
-	PdfIndRef catalog_ref = trailer_dict.get_entry(object::ROOT_NAME).get_as(ObjectType.IND_REF)!;
-
-	pdf.catalog = pdf.get_ref(catalog_ref).get_as(ObjectType.DICT)!;
-
-	// TODO(bhester): validate that all the fields have been set properly?
-	return pdf;
-}
-
-fn uint page_count(Pdf* pdf)
-{
-	PdfIndRef page_ref = pdf.catalog.get_entry(object::PAGES_NAME).get_as(ObjectType.IND_REF)!!;
-	PdfDict pages_root = pdf.get_ref(page_ref).get_as(ObjectType.DICT)!!;
+	PdfIndRef page_ref = self.catalog.get_entry(object::PAGES_NAME).get_as(IND_REF)!!;
+	PdfDict pages_root = self.get_ref(page_ref).get_as(DICT)!!;
 
 	PdfObject count_obj = pages_root.get_entry(object::COUNT_NAME)!!;
-	if (count_obj.is(ObjectType.IND_REF))
+	if (count_obj.is(IND_REF))
 	{
-		count_obj = pdf.get_ref(count_obj.get_as(ObjectType.IND_REF))!!;
+		count_obj = self.get_ref(count_obj.get_as(IND_REF))!!;
 	}
-	usz count_num = count_obj.get_as(ObjectType.NUMBER).get_as(NumberType.INTEGER);
+	usz count_num = count_obj.get_as(NUMBER).get_as(INTEGER);
 
 	assert(count_num < uint.max);
 	return (uint)count_num;
@@ -312,7 +314,7 @@ fn XRef! read_xref_inner(String contents, usz offset, Pdf* pdf, Allocator alloca
 		common::@skip_whitespace(text);
 
 		PdfDict trailer =
-			object::try_read_expecting(ObjectType.DICT, text, pdf) ??
+			object::try_read_expecting(DICT, text, pdf) ??
 			PdfFault.INVALID_XREF?!;
 
 		// TODO(bhester): check the number of entries matches the number given
@@ -321,8 +323,8 @@ fn XRef! read_xref_inner(String contents, usz offset, Pdf* pdf, Allocator alloca
 		PdfObject! entry = trailer.get_entry(object::PREV_NAME);
 		if (try entry)
 		{
-			PdfNumber num = entry.try_get_as(ObjectType.NUMBER) ?? PdfFault.INVALID_XREF?!;
-			usz prev_offset = num.try_get_as(NumberType.INTEGER) ?? PdfFault.INVALID_XREF?!;
+			PdfNumber num = entry.try_get_as(NUMBER) ?? PdfFault.INVALID_XREF?!;
+			usz prev_offset = num.try_get_as(INTEGER) ?? PdfFault.INVALID_XREF?!;
 
 			XRef prev_xref = read_xref_inner(contents, prev_offset, pdf, allocator)!;
 			return {

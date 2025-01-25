@@ -54,7 +54,7 @@ fn int test_pdf(String filename, Allocator allocator = allocator::heap())
 	// 109466
 	// 109477
 	PdfIndRef target_ref = {1354, 0};
-	PdfStream stm = pdf.get_ref(target_ref).get_as(ObjectType.STREAM)!!;
+	PdfStream stm = pdf.get_ref(target_ref).get_as(STREAM)!!;
 
 	char[] stream_contents = stm.get_contents(pdf)!!;
 	defer allocator::free(allocator, stream_contents.ptr);

@@ -369,6 +369,18 @@ fn void PdfArray.free(self, Allocator allocator)
 	self.list.free();
 }
 
+macro bool PdfDict.has_entry(self, PdfName name) => self.map.has_key(name);
+macro PdfObject! PdfDict.get_entry(self, PdfName name) => self.map.get(name);
+macro PdfObject! PdfDict.get_ind_entry(self, PdfName name, Pdf* pdf)
+{
+	PdfObject obj = self.get_entry(name)!;
+	if (obj.is(IND_REF))
+	{
+		obj = pdf.get_ref(obj.get_as(IND_REF))!;
+	}
+	return obj;
+}
+
 fn bool PdfDict.equals(self, PdfDict other)
 {
 	HashMap(<PdfName, PdfObject>) s = self.map;
@@ -520,7 +532,7 @@ fn PdfObject! read_from(String contents, Pdf* pdf, usz* len = null)
 				usz num_len;
 				PdfNumber num = read_number_at(contents, &num_len)!;
 
-				if (num.type == NumberType.INTEGER && !num.signed)
+				if (num.type == INTEGER && !num.signed)
 				{
 					String after_num = contents[num_len..];
 					common::@skip_whitespace(after_num);
@@ -880,7 +892,7 @@ fn PdfDict! read_dict_at(String contents, Pdf* pdf, usz* len)
 		}
 
 		usz obj_len;
-		PdfName name = try_read_expecting(ObjectType.NAME, cur_contents, pdf, &obj_len, PdfFault.EXPECTED_NAME)!;
+		PdfName name = try_read_expecting(NAME, cur_contents, pdf, &obj_len, PdfFault.EXPECTED_NAME)!;
 
 		cur_contents = cur_contents[obj_len..];
 		common::@skip_whitespace(cur_contents);
@@ -900,9 +912,6 @@ fn PdfDict! read_dict_at(String contents, Pdf* pdf, usz* len)
 	return {res};
 }
 
-macro bool PdfDict.has_entry(self, PdfName name) => self.map.has_key(name);
-macro PdfObject! PdfDict.get_entry(self, PdfName name) => self.map.get(name);
-
 fn PdfStream! read_stream_at(String contents, PdfDict dict, Pdf* pdf, usz* len)
 {
 	String after_obj = contents;
@@ -914,11 +923,11 @@ fn PdfStream! read_stream_at(String contents, PdfDict dict, Pdf* pdf, usz* len)
 	if (after_obj.starts_with("\n")) after_obj = after_obj[1..];
 
 	PdfObject len_obj = dict.get_entry(LENGTH_NAME)!;
-	if (len_obj.is(ObjectType.IND_REF))
+	if (len_obj.is(IND_REF))
 	{
-		len_obj = pdf.get_ref(len_obj.get_as(ObjectType.IND_REF))!;
+		len_obj = pdf.get_ref(len_obj.get_as(IND_REF))!;
 	}
-	usz stream_len = len_obj.get_as(ObjectType.NUMBER).get_as(NumberType.INTEGER);
+	usz stream_len = len_obj.get_as(NUMBER).get_as(INTEGER);
 	String stream_contents = after_obj[:stream_len];
 
 	String after_stream = after_obj[stream_len..];
@@ -930,7 +939,7 @@ fn PdfStream! read_stream_at(String contents, PdfDict dict, Pdf* pdf, usz* len)
 }
 
 <*
- @require num.type == NumberType.INTEGER
+ @require num.type == INTEGER
  @require !num.signed
 *>
 fn PdfIndRef! cont_read_ind_ref_at(String contents, PdfNumber num, usz* len)
