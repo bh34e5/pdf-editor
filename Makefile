@@ -4,12 +4,14 @@ CONFIG-LOCK = .is-configured
 
 UNAME_S := $(shell uname -s)
 TARGET = windows-x64
+DEBUG = gdb
 
 ifeq ($(UNAME_S),Darwin)
 	TARGET = macos-x64
+	DEBUG = lldb
 endif
 
-.PHONY: clean
+.PHONY: test_ref test_sobel run debug clean
 
 pdf-editor: $(LIBS) *.c3 project.json Makefile | $(CONFIG-LOCK)
 	c3c build $(TARGET)
@@ -49,6 +51,12 @@ test_ref: pdf-editor
 
 test_sobel: pdf-editor
 	./pdf-editor sobel.pdf
+
+run: pdf-editor
+	./pdf-editor
+
+debug: pdf-editor
+	$(DEBUG) ./pdf-editor
 
 clean:
 	$(MAKE) -C deps/zlib/ clean

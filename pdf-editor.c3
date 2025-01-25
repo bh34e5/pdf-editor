@@ -1,10 +1,12 @@
 module pdf::editor;
 
-import std::io;
+import pdf::object;
+import pdf::render;
 
 import raygui::rg;
 import raylib55::rl;
-import pdf::object;
+
+import std::io;
 
 const char* GUI_TITLE = "PDF Editor";
 

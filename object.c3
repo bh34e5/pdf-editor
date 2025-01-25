@@ -1,11 +1,12 @@
 module pdf::object;
 
+import pdf::common;
+
+import zlib;
+
 import std::collections::list;
 import std::collections::map;
 import std::io;
-
-import zlib;
-import pdf::common;
 
 def ZLibStream = zlib::ZLibStream(<void>);
 
