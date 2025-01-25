@@ -68,6 +68,8 @@ struct XRefEntry
 	}
 }
 
+distinct PdfPage = inline PdfDict;
+
 fn Pdf*! read_new(String filename, Allocator allocator = allocator::heap())
 {
 	String contents = (String)file::load_new(filename, allocator)!;
@@ -181,6 +183,38 @@ fn uint Pdf.page_count(&self)
 
 	assert(count_num < uint.max);
 	return (uint)count_num;
+}
+
+fn PdfPage! Pdf.get_page(&self, usz page_ind)
+{
+	PdfIndRef page_ref = self.catalog.get_entry(object::PAGES_NAME).get_as(IND_REF)!!;
+	PdfDict pages_root = self.get_ref(page_ref).get_as(DICT)!!;
+
+	PdfArray kids = pages_root.get_ind_entry(object::KIDS_NAME, self).get_as(ARRAY)!;
+	usz kids_len = kids.list.len();
+
+	PdfPageTree tree = {kids_len, pages_root};
+	while (tree.count > 0)
+	{
+		usz kids_ind = 0;
+		while (kids_ind < kids_len)
+		{
+			PdfPageTree kid_tree = page_tree_kid_ind(tree.page, kids_ind, self)!;
+			usz kid_count = kid_tree.count;
+
+			if ((page_ind == 0 && kid_count == 0) || (page_ind < kid_count))
+			{
+				tree = kid_tree;
+				break;
+			}
+			else
+			{
+				page_ind -= kid_count ?: 1;
+				kids_ind += 1;
+			}
+		}
+	}
+	return (PdfPage)tree.page;
 }
 
 module pdf @private;
@@ -356,4 +390,40 @@ fn usz! last_eof(String s)
 
 	if (!found) return SearchResult.MISSING?;
 	return ind;
+}
+
+struct PdfPageTree
+{
+	usz count;
+	PdfDict page;
+}
+
+fn PdfPageTree! page_tree_kid_ind(PdfDict page_root, usz ind, Pdf* pdf)
+{
+	PdfName type = page_root.get_entry(object::TYPE_NAME).get_as(NAME)!;
+	assert(equals(type, object::PAGES_NAME));
+
+	PdfArray kids = page_root.get_ind_entry(object::KIDS_NAME, pdf).get_as(ARRAY)!;
+	usz kids_len = kids.list.len();
+	assert(ind < kids_len);
+
+	PdfIndRef kid_ref = kids.list[ind].get_as(IND_REF);
+	PdfDict kid = pdf.get_ref_as(DICT, kid_ref)!;
+	PdfName kid_type = kid.get_entry(object::TYPE_NAME).get_as(NAME)!;
+
+	PdfPageTree res;
+	if (equals(kid_type, object::PAGE_NAME))
+	{
+		res.count = 0;
+		res.page = kid;
+	}
+	else
+	{
+		PdfNumber count_num = kid.get_ind_entry(object::COUNT_NAME, pdf).get_as(NUMBER)!;
+		ulong count = count_num.get_as(INTEGER);
+
+		res.count = (usz)count; // TODO(bhester): safe cast??
+		res.page = kid;
+	}
+	return res;
 }
