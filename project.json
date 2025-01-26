@@ -6,11 +6,14 @@
       "sources": [
         "common.c3",
         "object.c3",
+        "object-utils.c3",
         "pdf.c3",
         "pdf-editor.c3",
+        "pdf-math.c3",
         "pdf-render.c3",
         "raygui.c3",
         "raylib.c3",
+        "stack.c3",
         "stream.c3",
         "zlib.c3"
       ],
@@ -23,11 +26,14 @@
       "sources": [
         "common.c3",
         "object.c3",
+        "object-utils.c3",
         "pdf.c3",
         "pdf-editor.c3",
+        "pdf-math.c3",
         "pdf-render.c3",
         "raygui.c3",
         "raylib.c3",
+        "stack.c3",
         "stream.c3",
         "zlib.c3"
       ],

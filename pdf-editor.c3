@@ -239,11 +239,12 @@ fn void display_pdf(PdfState* pdf_state, UIState* ui_state)
 
 fn void display_page(PdfState* pdf_state, UIState* ui_state)
 {
+	Pdf* pdf = pdf_state.pdf;
 	PdfPage page = pdf_state.page;
 
-	render::@for_render_objects(page; RenderObject obj)
+	render::@for_render_objects(page, pdf; RenderObject obj)
 	{
-		(void)obj;
+		io::printfn("%s", obj);
 	};
 }
 
