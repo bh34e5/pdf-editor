@@ -168,40 +168,61 @@ struct PdfIndRef (Printable)
 
 enum PdfKeyword (Printable) : (String value)
 {
-	J_U     = "J",
-	M_U     = "M",
-	Q_U     = "Q",
-	W_U     = "W",
-	D_L     = "d",
-	F_L     = "f",
-	G_L     = "g",
-	I_L     = "i",
-	J_L     = "j",
-	N_L     = "n",
-	Q_L     = "q",
-	W_L     = "w",
-	BT_UU   = "BT",
-	ET_UU   = "ET",
-	TD_UU   = "TD",
-	TJ_UU   = "TJ",
-	TL_UU   = "TL",
-	TC_UL   = "Tc",
-	TD_UL   = "Td",
-	TF_UL   = "Tf",
-	TJ_UL   = "Tj",
-	TM_UL   = "Tm",
-	TR_UL   = "Tr",
-	TS_UL   = "Ts",
-	TW_UL   = "Tw",
-	TZ_UL   = "Tz",
-	CM_LL   = "cm",
-	GS_LL   = "gs",
-	RE_LL   = "re",
-	RI_LL   = "ri",
-	RG_LL   = "rg",
-	T_STAR  = "T*",
-	D_QUOTE = "\"",
-	S_QUOTE = "'",
+	B_U      = "B",
+	F_U      = "F",
+	J_U      = "J",
+	M_U      = "M",
+	Q_U      = "Q",
+	S_U      = "S",
+	W_U      = "W",
+
+	B_L      = "b",
+	C_L      = "c",
+	D_L      = "d",
+	F_L      = "f",
+	G_L      = "g",
+	H_L      = "h",
+	I_L      = "i",
+	J_L      = "j",
+	L_L      = "l",
+	M_L      = "m",
+	N_L      = "n",
+	Q_L      = "q",
+	S_L      = "s",
+	V_L      = "v",
+	W_L      = "w",
+	Y_L      = "y",
+
+	BT_UU    = "BT",
+	ET_UU    = "ET",
+	TD_UU    = "TD",
+	TJ_UU    = "TJ",
+	TL_UU    = "TL",
+
+	TC_UL    = "Tc",
+	TD_UL    = "Td",
+	TF_UL    = "Tf",
+	TJ_UL    = "Tj",
+	TM_UL    = "Tm",
+	TR_UL    = "Tr",
+	TS_UL    = "Ts",
+	TW_UL    = "Tw",
+	TZ_UL    = "Tz",
+
+	CM_LL    = "cm",
+	GS_LL    = "gs",
+	RE_LL    = "re",
+	RI_LL    = "ri",
+	RG_LL    = "rg",
+
+	B_U_STAR = "B*",
+	T_U_STAR = "T*",
+
+	B_L_STAR = "b*",
+	F_L_STAR = "f*",
+
+	D_QUOTE  = "\"",
+	S_QUOTE  = "'",
 }
 
 fn bool PdfObject.equals(self, PdfObject other)
@@ -566,6 +587,9 @@ fn PdfObject! read_from(String contents, Pdf* pdf, usz* len = null)
 			PdfKeyword! kwd = try_read_keyword(contents);
 			if (catch kwd)
 			{
+				String to_space = contents.splitter(" ").next()!!;
+				io::eprintf("Unexpected character(s): %s", to_space);
+
 				return PdfFault.UNEXPECTED_CHARACTER?;
 			}
 
